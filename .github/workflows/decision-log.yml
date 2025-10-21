@@ -1,0 +1,105 @@
+name: Decision Log
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: decision-log-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  append:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine base/head SHAs
+        id: shas
+        run: |
+          base="${{ github.event.pull_request.base.sha }}"
+          head="${{ github.event.pull_request.merge_commit_sha }}"
+          if [ -z "$head" ]; then head="${{ github.event.pull_request.head.sha }}"; fi
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+          echo "head=$head" >> "$GITHUB_OUTPUT"
+
+      - name: Check if docs-only changes
+        id: diff
+        run: |
+          git fetch --no-tags origin ${{ steps.shas.outputs.base }} ${{ steps.shas.outputs.head }}
+          files="$(git diff --name-only ${{ steps.shas.outputs.base }} ${{ steps.shas.outputs.head }})"
+          echo "Changed files:"
+          echo "$files"
+          non_docs="$(echo "$files" | grep -vE '^(docs/|README\.md$)' || true)"
+          if [ -z "$non_docs" ]; then
+            echo "only_docs=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "only_docs=false" >> "$GITHUB_OUTPUT"
+            echo "$files" | head -n 10 > /tmp/files.txt
+          fi
+
+      - name: Ensure docs folder exists
+        if: steps.diff.outputs.only_docs == 'false'
+        run: mkdir -p docs
+
+      - name: Ensure DECISIONS.md exists
+        if: steps.diff.outputs.only_docs == 'false'
+        run: |
+          if [ ! -f docs/DECISIONS.md ]; then
+            echo "# Decisions Log" > docs/DECISIONS.md
+            echo "" >> docs/DECISIONS.md
+            echo "> One-liners of things we decided and why. Newest on top." >> docs/DECISIONS.md
+          fi
+
+      - name: Build decision entry (with top changed files)
+        if: steps.diff.outputs.only_docs == 'false'
+        id: entry
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_NUM: ${{ github.event.pull_request.number }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          PR_USER: ${{ github.event.pull_request.user.login }}
+          MERGED_AT: ${{ github.event.pull_request.merged_at }}
+        run: |
+          when="$(date -u -d "${MERGED_AT}" +'%Y-%m-%d' 2>/dev/null || date -u +'%Y-%m-%d')"
+          {
+            echo "- ${when}: ${PR_TITLE} — by @${PR_USER} ([#${PR_NUM}](${PR_URL}))"
+            if [ -s /tmp/files.txt ]; then
+              echo ""
+              echo "  Changed files:"
+              sed 's/^/  - /' /tmp/files.txt
+            fi
+          } > /tmp/decision_entry.txt
+          echo "Built entry:"
+          cat /tmp/decision_entry.txt
+
+      - name: Prepend entry to DECISIONS.md
+        if: steps.diff.outputs.only_docs == 'false'
+        run: |
+          tmp="$(mktemp)"
+          cat /tmp/decision_entry.txt | cat - docs/DECISIONS.md > "${tmp}"
+          mv "${tmp}" docs/DECISIONS.md
+
+      - name: Commit changes
+        if: steps.diff.outputs.only_docs == 'false'
+        run: |
+          git config user.name  "decision-bot"
+          git config user.email "decision-bot@users.noreply.github.com"
+          git add docs/DECISIONS.md
+          if ! git diff --cached --quiet; then
+            git commit -m "docs(decisions): log merged PR #${{ github.event.pull_request.number }}"
+            git push
+          else
+            echo "No changes to commit."
+          fi
+
+      - name: Docs-only PR — skipping log
+        if: steps.diff.outputs.only_docs == 'true'
+        run: echo "PR touched only docs/ or README.md; skipping DECISIONS.md update."
