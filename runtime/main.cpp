@@ -1,6 +1,6 @@
 
-#include "engine/core/Engine.h"
-#include "engine/render/IRenderer.h"
+#include "core/Engine.h"
+#include "render/IRenderer.h"
 #include <memory>
 #include <cstdio>
 
