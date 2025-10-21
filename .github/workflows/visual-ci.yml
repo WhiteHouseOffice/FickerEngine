@@ -3,7 +3,7 @@ name: Visual Build & Capture
 on:
   push:
   pull_request:
-   workflow_dispatch:  # allows manual runs from the Actions tab
+   #workflow_dispatch:  # allows manual runs from the Actions tab
 
 jobs:
   web-build-and-capture:
@@ -32,7 +32,38 @@ jobs:
           npm init -y >/dev/null 2>&1 || true
           npm i puppeteer@22 --silent
       - name: Capture frames (Puppeteer)
-        run: node scripts/ci/capture.js
+        run: |
+    node - <<'JS'
+    const fs = require('fs');
+    const path = require('path');
+    const puppeteer = require('puppeteer');
+
+    (async () => {
+      const outDir = path.join('out', 'web_frames');
+      fs.mkdirSync(outDir, { recursive: true });
+
+      const browser = await puppeteer.launch({
+        headless: true,
+        args: ['--no-sandbox', '--enable-unsafe-webgpu']
+      });
+      const page = await browser.newPage();
+
+      const url = 'file://' + path.resolve('webbuild/site/index.html');
+      await page.goto(url, { waitUntil: 'load' });
+
+      // Wait until our page signals readiness.
+      // Our index.html sets: window.engineReady = true
+      await page.waitForFunction(() => window.engineReady === true, { timeout: 60000 });
+
+      for (let i = 0; i < 60; i++) {
+        await page.evaluate(() => { if (typeof window.stepOnce === 'function') window.stepOnce(); });
+        const buf = await page.screenshot({ type: 'png' });
+        fs.writeFileSync(path.join(outDir, `frame_${String(i).padStart(3,'0')}.png`), buf);
+      }
+
+      await browser.close();
+    })().catch(e => { console.error(e); process.exit(1); });
+    JS
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
