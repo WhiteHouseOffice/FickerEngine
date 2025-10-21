@@ -1,0 +1,42 @@
+name: Agent Debug
+on:
+  workflow_dispatch: {}   # run manually from the Actions tab
+
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show event + repo state
+        run: |
+          echo "Event: $GITHUB_EVENT_NAME"
+          echo "Default branch: $GITHUB_REF_NAME"
+          echo "Files:"
+          git ls-files | sed -n '1,200p'
+          echo
+          echo "Check key files exist:"
+          test -f scripts/agent/repo_agent.py && echo "OK scripts/agent/repo_agent.py" || (echo "MISSING scripts/agent/repo_agent.py"; exit 2)
+          test -f .github/workflows/agent.yml && echo "OK .github/workflows/agent.yml" || (echo "MISSING agent.yml"; exit 2)
+
+      - name: Check OPENAI secret presence (not printing the secret)
+        env:
+          HAS_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          if [ -n "${HAS_KEY:-}" ]; then
+            echo "OPENAI_API_KEY is present ✅"
+          else
+            echo "OPENAI_API_KEY is NOT set ❌"; exit 3
+          fi
+
+      - name: Python + OpenAI import
+        run: |
+          python3 --version
+          pip install -q openai==1.42.0
+          python3 - <<'PY'
+try:
+    import openai
+    print("openai imported ✅")
+except Exception as e:
+    print("openai import failed ❌", e); exit(4)
+PY
