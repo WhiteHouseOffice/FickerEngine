@@ -3,6 +3,7 @@ name: Visual Build & Capture
 on:
   push:
   pull_request:
+   workflow_dispatch:  # allows manual runs from the Actions tab
 
 jobs:
   web-build-and-capture:
