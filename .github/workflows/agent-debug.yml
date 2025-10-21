@@ -1,6 +1,6 @@
-name: Agent Debug
+name: Agent Debug (Verbose, Non-Failing)
 on:
-  workflow_dispatch: {}   # run manually from the Actions tab
+  workflow_dispatch: {}
 
 jobs:
   diag:
@@ -8,29 +8,48 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Show event + repo state
+      - name: Print context
+        continue-on-error: true
         run: |
-          echo "Event: $GITHUB_EVENT_NAME"
-          echo "Default branch: $GITHUB_REF_NAME"
-          echo "Files:"
-          git ls-files | sed -n '1,200p'
-          echo
-          echo "Check key files exist:"
-          test -f scripts/agent/repo_agent.py && echo "OK scripts/agent/repo_agent.py" || (echo "MISSING scripts/agent/repo_agent.py"; exit 2)
-          test -f .github/workflows/agent.yml && echo "OK .github/workflows/agent.yml" || (echo "MISSING agent.yml"; exit 2)
+          set -x
+          echo "EVENT=$GITHUB_EVENT_NAME"
+          echo "REF=$GITHUB_REF_NAME"
+          echo "SHA=$GITHUB_SHA"
+          echo "DEFAULT_BRANCH=$(git remote show origin | sed -n 's/  HEAD branch: //p')"
 
-      - name: Check OPENAI secret presence (not printing the secret)
+      - name: List files
+        continue-on-error: true
+        run: |
+          set -x
+          git ls-files | sed -n '1,200p'
+
+      - name: Check key files exist
+        id: files
+        continue-on-error: true
+        run: |
+          set -x
+          for f in scripts/agent/repo_agent.py .github/workflows/agent.yml; do
+            if [ -f "$f" ]; then echo "OK $f"; else echo "MISSING $f"; fi
+          done
+
+      - name: Check OPENAI secret presence (won't print it)
+        id: secret
+        continue-on-error: true
         env:
           HAS_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
+          set -x
           if [ -n "${HAS_KEY:-}" ]; then
             echo "OPENAI_API_KEY is present ✅"
           else
-            echo "OPENAI_API_KEY is NOT set ❌"; exit 3
+            echo "OPENAI_API_KEY is NOT set ❌"
           fi
 
       - name: Python + OpenAI import
+        id: py
+        continue-on-error: true
         run: |
+          set -x
           python3 --version
           pip install -q openai==1.42.0
           python3 - <<'PY'
@@ -38,5 +57,13 @@ try:
     import openai
     print("openai imported ✅")
 except Exception as e:
-    print("openai import failed ❌", e); exit(4)
+    print("openai import failed ❌", e)
 PY
+
+      - name: Summarize
+        run: |
+          echo "---- SUMMARY ----"
+          echo "Files check:  see step 'Check key files exist'"
+          echo "Secret check: see step 'Check OPENAI secret presence'"
+          echo "Python/OpenAI: see step 'Python + OpenAI import'"
+          echo "This job is forced to succeed so you can read all logs."
