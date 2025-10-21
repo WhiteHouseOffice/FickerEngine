@@ -1,0 +1,40 @@
+# Build & intermediate directories
+build/
+webbuild/
+out/
+bin/
+lib/
+CMakeFiles/
+CMakeCache.txt
+*.cmake
+Makefile
+*.ninja
+*.o
+*.obj
+*.a
+*.lib
+*.dll
+*.so
+*.dylib
+*.exe
+*.wasm
+*.js
+
+# Emscripten SDK (local install)
+emsdk/
+emsdk_env.sh
+.env
+
+# Logs / caches
+*.log
+*.tmp
+*.cache
+.cache/
+node_modules/
+
+# OS / editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
