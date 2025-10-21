@@ -1,0 +1,15 @@
+name: Check docs updates
+on:
+  push:
+    branches: [main]
+
+jobs:
+  ensure-docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check for uncommitted docs
+        run: |
+          if ! git diff --exit-code --quiet docs/; then
+            echo "::warning file=docs/SESSION_LOG.md::Docs changed but not committed"
+          fi
