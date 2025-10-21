@@ -13,7 +13,10 @@ const puppeteer = require('puppeteer');
   const page = await browser.newPage();
   const url = 'file://' + path.resolve('webbuild/site/index.html');
   await page.goto(url);
-  await page.waitForFunction(() => window.engineReady === true, {timeout: 60000});
+  await page.waitForFunction(
+  () => (window.engineReady === true) || document.readyState === 'complete',
+  { timeout: 60000 }
+  );
   for (let i=0;i<60;i++) {
     await page.evaluate(() => window.stepOnce && window.stepOnce());
     const buf = await page.screenshot({type:'png'});

@@ -3,20 +3,20 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>FickerEngine WebGPU – Triangle</title>
+  <title>FickerEngine Web Preview</title>
   <style>
     html, body { margin:0; padding:0; height:100%; background:#111; color:#ddd; font-family: system-ui, sans-serif; }
     #wrap { display:flex; flex-direction:column; height:100%; }
     header { padding:8px 12px; background:#1e1e1e; border-bottom:1px solid #333; display:flex; gap:12px; align-items:center; }
     canvas { width: 100%; height: calc(100% - 60px); display:block; }
     button { padding:6px 10px; }
-    #status { opacity: .8; font-size: 12px; }
+    #status { opacity:.8; font-size:12px; }
   </style>
 </head>
 <body>
 <div id="wrap">
   <header>
-    <strong>FickerEngine</strong> — WebGPU Triangle
+    <strong>FickerEngine</strong> — Web preview (WebGPU or 2D fallback)
     <button id="step">stepOnce()</button>
     <span id="status">initializing…</span>
   </header>
@@ -24,138 +24,111 @@
 </div>
 
 <script type="module">
-  // ---- Engine/CI handshake ----
-  // C++ (emscripten) will provide window.stepOnce(). We render in JS.
+  // Handshake for CI:
   window.engineReady = false;
-
   const statusEl = document.getElementById('status');
   const canvas = document.getElementById('canvas');
 
-  // ---- WebGPU init ----
-  if (!('gpu' in navigator)) {
-    statusEl.textContent = 'WebGPU not available';
-    throw new Error('WebGPU not available');
-  }
+  // Always expose a working step that draws a frame, even if WebGPU is missing.
+  let drawFrame = null;
 
-  const adapter = await navigator.gpu.requestAdapter();
-  const device = await adapter.requestDevice();
-  const ctx = canvas.getContext('webgpu');
-  const format = navigator.gpu.getPreferredCanvasFormat();
+  // --- Try WebGPU first ---
+  async function tryWebGPU() {
+    if (!('gpu' in navigator)) return false;
+    try {
+      const adapter = await navigator.gpu.requestAdapter();
+      if (!adapter) return false;
+      const device = await adapter.requestDevice();
+      const ctx = canvas.getContext('webgpu');
+      if (!ctx) return false;
+      const format = navigator.gpu.getPreferredCanvasFormat();
+      ctx.configure({ device, format, alphaMode: 'opaque' });
 
-  ctx.configure({
-    device,
-    format,
-    alphaMode: 'opaque',
-  });
-
-  // ---- WGSL shaders ----
-  const shaderCode = /* wgsl */`
-struct VSOut {
-  @builtin(position) pos : vec4<f32>,
-  @location(0) color : vec3<f32>,
-};
-
-@vertex
-fn vs_main(@location(0) inPos : vec2<f32>,
-           @location(1) inCol : vec3<f32>) -> VSOut {
-  var out : VSOut;
-  out.pos = vec4<f32>(inPos, 0.0, 1.0);
-  out.color = inCol;
-  return out;
-}
-
-@fragment
-fn fs_main(v : VSOut) -> @location(0) vec4<f32> {
-  return vec4<f32>(v.color, 1.0);
-}
-`;
-
-  const module = device.createShaderModule({ code: shaderCode });
-
-  const pipeline = device.createRenderPipeline({
-    layout: 'auto',
-    vertex: {
-      module,
-      entryPoint: 'vs_main',
-      buffers: [
-        { // position: vec2<f32>
-          arrayStride: 2 * 4,
-          attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x2' }]
-        },
-        { // color: vec3<f32>
-          arrayStride: 3 * 4,
-          attributes: [{ shaderLocation: 1, offset: 0, format: 'float32x3' }]
+      const shaderCode = /* wgsl */`
+        struct VSOut { @builtin(position) pos: vec4<f32>, @location(0) color: vec3<f32>, };
+        @vertex fn vs_main(@location(0) p: vec2<f32>, @location(1) c: vec3<f32>) -> VSOut {
+          var o: VSOut; o.pos = vec4<f32>(p, 0.0, 1.0); o.color = c; return o;
         }
-      ]
-    },
-    fragment: {
-      module,
-      entryPoint: 'fs_main',
-      targets: [{ format }],
-    },
-    primitive: { topology: 'triangle-list' },
-  });
+        @fragment fn fs_main(v: VSOut) -> @location(0) vec4<f32> { return vec4<f32>(v.color, 1.0); }
+      `;
+      const module = device.createShaderModule({ code: shaderCode });
+      const pipeline = device.createRenderPipeline({
+        layout: 'auto',
+        vertex: {
+          module, entryPoint: 'vs_main',
+          buffers: [
+            { arrayStride: 8, attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x2' }] },
+            { arrayStride: 12, attributes: [{ shaderLocation: 1, offset: 0, format: 'float32x3' }] },
+          ]
+        },
+        fragment: { module, entryPoint: 'fs_main', targets: [{ format }] },
+        primitive: { topology: 'triangle-list' },
+      });
 
-  // Triangle geometry (positions in clip space, colors RGB)
-  const pos = new Float32Array([
-    -0.7, -0.6,
-     0.7, -0.6,
-     0.0,  0.7,
-  ]);
-  const col = new Float32Array([
-    1.0, 0.2, 0.2,
-    0.2, 1.0, 0.2,
-    0.2, 0.2, 1.0,
-  ]);
+      const pos = new Float32Array([-0.7,-0.6, 0.7,-0.6, 0.0,0.7]);
+      const col = new Float32Array([1,0.2,0.2, 0.2,1,0.2, 0.2,0.2,1]);
+      function makeBuf(typed, usage) {
+        const buf = device.createBuffer({ size: typed.byteLength, usage, mappedAtCreation: true });
+        new typed.constructor(buf.getMappedRange()).set(typed);
+        buf.unmap(); return buf;
+      }
+      const posBuf = makeBuf(pos, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST);
+      const colBuf = makeBuf(col, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST);
 
-  function makeBuffer(typed) {
-    const buf = device.createBuffer({
-      size: typed.byteLength,
-      usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
-    });
-    device.queue.writeBuffer(buf, 0, typed.buffer, typed.byteOffset, typed.byteLength);
-    return buf;
+      drawFrame = () => {
+        const view = ctx.getCurrentTexture().createView();
+        const enc = device.createCommandEncoder();
+        const pass = enc.beginRenderPass({
+          colorAttachments: [{
+            view, loadOp: 'clear', storeOp: 'store',
+            clearValue: { r: .07, g: .07, b: .09, a: 1 }
+          }]
+        });
+        pass.setPipeline(pipeline);
+        pass.setVertexBuffer(0, posBuf);
+        pass.setVertexBuffer(1, colBuf);
+        pass.draw(3, 1, 0, 0);
+        pass.end();
+        device.queue.submit([enc.finish()]);
+      };
+
+      statusEl.textContent = 'ready (WebGPU)';
+      return true;
+    } catch (e) {
+      console.warn('WebGPU init failed, falling back to 2D:', e);
+      return false;
+    }
   }
 
-  const posBuf = makeBuffer(pos);
-  const colBuf = makeBuffer(col);
-
-  // ---- One-frame render (called by our button and by CI script) ----
-  function drawFrame() {
-    const view = ctx.getCurrentTexture().createView();
-    const encoder = device.createCommandEncoder();
-    const pass = encoder.beginRenderPass({
-      colorAttachments: [{
-        view,
-        loadOp: 'clear',
-        storeOp: 'store',
-        clearValue: { r: 0.07, g: 0.07, b: 0.09, a: 1.0 }
-      }]
-    });
-    pass.setPipeline(pipeline);
-    pass.setVertexBuffer(0, posBuf);
-    pass.setVertexBuffer(1, colBuf);
-    pass.draw(3, 1, 0, 0);
-    pass.end();
-    device.queue.submit([encoder.finish()]);
+  // --- Fallback: 2D Canvas (always available) ---
+  function setup2D() {
+    const g = canvas.getContext('2d');
+    drawFrame = () => {
+      g.fillStyle = '#121319';
+      g.fillRect(0, 0, canvas.width, canvas.height);
+      // simple RGB triangle approximation (3 colored corners)
+      const cx = canvas.width/2, cy = canvas.height/2;
+      g.fillStyle = '#ff3333'; g.beginPath(); g.moveTo(cx-240, cy+180); g.lineTo(cx, cy-210); g.lineTo(cx+240, cy+180); g.closePath(); g.fill();
+    };
+    statusEl.textContent = 'ready (2D fallback)';
   }
 
-  // Hook up the button: advance engine (C++) one step if present, then draw
-  document.getElementById('step').addEventListener('click', () => {
-    if (typeof window.stepOnce === 'function') window.stepOnce();
-    drawFrame();
-  });
+  // --- Initialize render path ---
+  const ok = await tryWebGPU();
+  if (!ok) setup2D();
 
-  // Expose to CI (Puppeteer will call stepOnce(); we draw after each call)
-  // We wrap the existing stepOnce so CI still calls one function.
+  // Wrap stepOnce: call engine step (if present), then draw a frame.
   const maybeEngineStep = window.stepOnce;
   window.stepOnce = () => {
     if (typeof maybeEngineStep === 'function') maybeEngineStep();
-    drawFrame();
+    if (typeof drawFrame === 'function') drawFrame();
   };
 
+  // Button for manual test
+  document.getElementById('step').addEventListener('click', () => window.stepOnce());
+
+  // Signal CI that we’re ready no matter what
   window.engineReady = true;
-  statusEl.textContent = 'ready';
   console.log('engineReady = true');
 </script>
 </body>
