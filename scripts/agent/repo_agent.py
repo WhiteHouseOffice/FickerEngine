@@ -102,7 +102,7 @@ def main() -> None:
     - Keep YAML valid for any CI/workflow changes.
     """)
 
-    model = os.environ.get("REPO_AGENT_MODEL", "gpt-4o")
+    model = (os.environ.get("REPO_AGENT_MODEL") or "gpt-4o").strip()
     api_key = os.environ.get("OPENAI_API_KEY", "").strip()
     if not api_key:
         print("OPENAI_API_KEY not set; exiting gracefully.")
