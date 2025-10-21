@@ -1,0 +1,34 @@
+
+name: Visual Build & Capture
+on:
+  push:
+  pull_request:
+
+jobs:
+  web-build-and-capture:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup emsdk
+        uses: emscripten/emsdk-action@v4
+      - name: Configure (web)
+        run: emcmake cmake -S . -B webbuild -D BUILD_WEB=ON -G Ninja
+      - name: Build
+        run: cmake --build webbuild
+      - name: Prepare site
+        run: |
+          mkdir -p webbuild/site
+          cp -r web/* webbuild/site/ || true
+          cp webbuild/bin/* webbuild/site/ || true
+      - name: Install Node deps
+        run: |
+          sudo apt-get update && sudo apt-get install -y xvfb
+          npm init -y >/dev/null 2>&1 || true
+          npm i puppeteer@22 --silent
+      - name: Capture frames (Puppeteer)
+        run: node scripts/ci/capture.js
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-frames
+          path: out/web_frames

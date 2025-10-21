@@ -1,0 +1,49 @@
+
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>FickerEngine Web Preview</title>
+  <style>
+    html, body { margin:0; padding:0; height:100%; background:#111; color:#ddd; font-family: system-ui, sans-serif; }
+    #wrap { display:flex; flex-direction:column; height:100%; }
+    header { padding:8px 12px; background:#1e1e1e; border-bottom:1px solid #333; }
+    canvas { width: 100%; height: calc(100% - 60px); display:block; }
+    #hud { padding:6px 12px; font-size:12px; }
+    button { padding:6px 10px; }
+  </style>
+</head>
+<body>
+<div id="wrap">
+  <header>
+    <strong>FickerEngine</strong> — WebGPU preview
+    <button id="step">stepOnce()</button>
+    <span id="status">loading…</span>
+  </header>
+  <canvas id="canvas" width="800" height="600"></canvas>
+  <div id="hud">If the button works, engineReady = true.</div>
+</div>
+<script type="module">
+  window.engineReady = false;
+  const status = document.getElementById('status');
+  function ready() {
+    window.engineReady = true;
+    status.textContent = 'ready';
+    console.log('engineReady = true');
+  }
+  const tryReady = () => {
+    if (typeof window.stepOnce === 'function') {
+      ready();
+      return;
+    }
+    setTimeout(tryReady, 100);
+  };
+  tryReady();
+
+  document.getElementById('step').addEventListener('click', () => {
+    if (typeof window.stepOnce === 'function') window.stepOnce();
+  });
+</script>
+</body>
+</html>
