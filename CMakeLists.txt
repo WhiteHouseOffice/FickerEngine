@@ -26,16 +26,21 @@ if(BUILD_WEB)
     )
     target_link_libraries(engine PRIVATE engine_core renderer_web)
 
-    # ✅ Important Emscripten options:
-    #  - USE_WEBGPU: provide WebGPU shims/libs
-    #  - EMBIND: enable embind runtime for EMSCRIPTEN_BINDINGS in main.cpp
+    # ✅ Emscripten link settings:
+    # - USE_WEBGPU: provide WebGPU shim/libs
     target_link_options(engine PRIVATE
         "-sUSE_WEBGPU=1"
-        "-sEMBIND=1"
-        # (optional toggles you can uncomment if needed)
+        # If you ever need growth / debug:
         # "-sALLOW_MEMORY_GROWTH=1"
         # "-sASSERTIONS=1"
     )
+
+    # ✅ Link embind explicitly (don’t pass -sEMBIND=1)
+    # You can do this either way:
+    target_link_libraries(engine PRIVATE embind)
+    # (equivalent alternative would be:
+    # target_link_options(engine PRIVATE "-lembind")
+    # )
 
     set_target_properties(engine PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
