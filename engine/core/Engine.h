@@ -1,4 +1,3 @@
-
 #pragma once
 #include <memory>
 #include <functional>
@@ -13,8 +12,12 @@ struct EngineConfig {
 class Engine {
 public:
   Engine(const EngineConfig& cfg, std::unique_ptr<IRenderer> r);
-  int runOnce(double dt); // returns 0 to continue, non-zero to request exit
+  ~Engine();                    // defined in Engine.cpp
+
+  int runOnce(double dt);       // returns 0 to continue, non-zero to request exit
   void draw(double t);
+
 private:
-  struct Impl; std::unique_ptr<Impl> impl;
+  struct Impl;                  // forward declaration for PIMPL
+  std::unique_ptr<Impl> impl;
 };
