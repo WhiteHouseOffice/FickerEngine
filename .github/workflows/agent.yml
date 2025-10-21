@@ -1,0 +1,62 @@
+name: Repo Agent (ChatOps)
+
+on:
+  issues:
+    types: [opened, edited, reopened]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  apply-instructions:
+    if: >
+      (github.event_name == 'issues') ||
+      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '/apply'))
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install deps
+        run: pip install openai==1.42.0 pyyaml==6.0.2
+
+      - name: Determine instruction text
+        id: instr
+        run: |
+          set -e
+          if [ "${{ github.event_name }}" = "issues" ]; then
+            printf "text<<'EOF'\n%s\n\n%s\nEOF\n" "${{ github.event.issue.title }}" "${{ github.event.issue.body }}" >> $GITHUB_OUTPUT
+          else
+            printf "text<<'EOF'\n%s\n\n%s\nEOF\n" "${{ github.event.issue.title }}" "${{ github.event.comment.body }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Run repo agent
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          REPO_AGENT_MODEL: ${{ vars.REPO_AGENT_MODEL }}
+        run: |
+          python scripts/agent/repo_agent.py << 'PY'
+${{ steps.instr.outputs.text }}
+PY
+
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v6
+        with:
+          title: ${{ env.REPO_AGENT_COMMIT_MESSAGE || 'Automated PR from Repo Agent' }}
+          body: |
+            Automated PR created by Repo Agent.
+            Instruction:
+            ```
+            ${{ steps.instr.outputs.text }}
+            ```
+          branch: ${{ env.REPO_AGENT_BRANCH }}
+          base: main
+          commit-message: ${{ env.REPO_AGENT_COMMIT_MESSAGE || 'Automated changes from Repo Agent' }}
