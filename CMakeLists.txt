@@ -21,6 +21,10 @@ if(BUILD_WEB)
         runtime/main.cpp
     )
     target_link_libraries(engine PRIVATE engine_core renderer_web)
+
+    # ✅ Ensure Emscripten links WebGPU support (provides webgpu headers/shim)
+    target_link_options(engine PRIVATE "-sUSE_WEBGPU=1")
+
     set_target_properties(engine PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 else()
     add_executable(engine
