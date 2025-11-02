@@ -1,58 +1,43 @@
 cmake_minimum_required(VERSION 3.20)
-project(FickerEngine C CXX)
-set(CMAKE_CXX_STANDARD 20)
+project(FickerEngine)
 
-option(BUILD_WEB "Build Web (Emscripten) target" OFF)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Core engine library
-add_library(engine_core
-    engine/core/Time.cpp
-    engine/core/Engine.cpp
+# Source files
+file(GLOB_RECURSE ENGINE_SOURCES
+    engine/core/*.cpp
+    engine/platform/*.cpp
 )
-target_include_directories(engine_core PUBLIC engine)
 
-if(BUILD_WEB)
-    add_compile_definitions(FE_WEB)
+add_executable(FickerEngine ${ENGINE_SOURCES})
 
-    # WebGPU renderer (Emscripten)
-    add_library(renderer_web
-        engine/render/WebGPURenderer.cpp
+# Include directories
+target_include_directories(FickerEngine PRIVATE
+    ${CMAKE_SOURCE_DIR}/engine
+    ${CMAKE_SOURCE_DIR}/engine/core
+    ${CMAKE_SOURCE_DIR}/engine/platform
+)
+
+# Web (Emscripten) vs native builds
+if (EMSCRIPTEN)
+    message(STATUS "Configuring for Emscripten (WebAssembly)")
+    set(CMAKE_EXECUTABLE_SUFFIX ".html")
+
+    target_compile_definitions(FickerEngine PRIVATE PLATFORM_WEB=1)
+    target_link_options(FickerEngine PRIVATE
+        "-sUSE_WEBGL2=1"
+        "-sFULL_ES3=1"
+        "-sALLOW_MEMORY_GROWTH=1"
+        "-sMAX_WEBGL_VERSION=2"
+        "-sMIN_WEBGL_VERSION=2"
+        "-sASYNCIFY"
+        "--shell-file" "${CMAKE_SOURCE_DIR}/engine/platform/web/shell.html"
     )
-    target_include_directories(renderer_web PUBLIC engine)
 
-    # Executable
-    add_executable(engine
-        runtime/main.cpp
-    )
-    target_link_libraries(engine PRIVATE engine_core renderer_web)
-
-    # ✅ Emscripten link settings:
-    # - USE_WEBGPU: provide WebGPU shim/libs
-    target_link_options(engine PRIVATE
-        "-sUSE_WEBGPU=1"
-        # If you ever need growth / debug:
-        # "-sALLOW_MEMORY_GROWTH=1"
-        # "-sASSERTIONS=1"
-    )
-
-    # ✅ Link embind explicitly (don’t pass -sEMBIND=1)
-    # You can do this either way:
-    target_link_libraries(engine PRIVATE embind)
-    # (equivalent alternative would be:
-    # target_link_options(engine PRIVATE "-lembind")
-    # )
-
-    set_target_properties(engine PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
-    )
 else()
-    # Native stub build (no renderer yet)
-    add_executable(engine
-        runtime/main.cpp
-    )
-    target_link_libraries(engine PRIVATE engine_core)
-    set_target_properties(engine PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
-    )
-target_include_directories(engine PRIVATE engine)
+    message(STATUS "Configuring for native build")
+    target_compile_definitions(FickerEngine PRIVATE PLATFORM_NATIVE=1)
+    find_package(OpenGL REQUIRED)
+    target_link_libraries(FickerEngine PRIVATE ${OPENGL_LIBRARIES})
 endif()
