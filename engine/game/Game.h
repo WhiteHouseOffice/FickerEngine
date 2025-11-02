@@ -1,5 +1,5 @@
 #pragma once
-#include "math/MiniMath.h"
+#include "math/MiniMath.h"   // for Vec3, Mat4
 
 class Game {
 public:
@@ -8,9 +8,9 @@ public:
     Mat4 View() const;
 
 private:
-    Vec3 camPos { 0.f, 2.f, 5.f };
-    float yaw   = 0.0f;   // radians, Y-axis
-    float pitch = 0.0f;   // radians, X-axis (unused for now; keep 0)
+    Vec3  camPos { 0.f, 2.f, 5.f };
+    float yaw    = 0.0f;          // radians
+    float pitch  = 0.0f;          // reserved
     float moveSpeed = 5.0f;
     float logTimer  = 0.0f;
 };
