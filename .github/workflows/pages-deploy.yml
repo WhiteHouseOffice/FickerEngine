@@ -36,7 +36,6 @@ jobs:
       - name: Prepare site
         run: |
           mkdir -p dist
-          # Rename the generated HTML to index.html so Pages serves it by default
           cp webbuild/FickerEngine.html dist/index.html
           cp webbuild/FickerEngine.js dist/
           cp webbuild/FickerEngine.wasm dist/
@@ -56,3 +55,7 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+
+      - name: Show Live URL in summary
+        run: |
+          echo "### ✅ Live preview: ${{ steps.deployment.outputs.page_url }}" >> $GITHUB_STEP_SUMMARY
