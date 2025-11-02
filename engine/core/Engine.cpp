@@ -25,9 +25,13 @@ struct Engine::Impl {
 
   void render_frame(uint32_t w, uint32_t h) {
 #if defined(FE_WEBGPU)
-    auto& ctx = WebGPUContext::Get();
-    if (!ctx.device) ctx.Init("#canvas");
-    ctx.ConfigureSurface(w, h);
+  auto& ctx = WebGPUContext::Get();
+  if (!ctx.device) ctx.Init("#canvas");
+  if (!ctx.device) {
+    // No WebGPU support: do nothing this frame (console already logs why)
+    return;
+  }
+  ctx.ConfigureSurface(w, h);
 
     // Compute PV matrix and upload to uniform buffer
     Mat4 P = perspective(60.f * 3.1415926f / 180.f, (float)w / (float)h, 0.01f, 500.f);

@@ -1,12 +1,43 @@
 #if defined(FE_WEBGPU)
 
 #include "WebGPUContext.h"
-#include <string.h>
+#include <string.h>   // memcpy, memset
+#include <stdint.h>
 
-// Forward declare the Emscripten helper so we don’t need extra headers.
+// -------- Header environment checks -----------------------------------------
+// We rely on Emscripten's WebGPU. Different runners expose headers in slightly
+// different paths, so the header *selection* is handled in WebGPUContext.h via
+// __has_include. Here we only need the runtime helper symbol below.
+
+// Emscripten provides a device getter in JS runtime:
 extern "C" WGPUDevice emscripten_webgpu_get_device(void);
 
-// Minimal WGSL: positions only + MVP; fixed color
+// Some declarations used below are only defined in the Emscripten header.
+// If we compiled with -sUSE_WEBGPU=1 (compile & link), emscripten/webgpu.h
+// will be visible and the types will exist. To be safe, we gate Canvas surface
+// creation behind a preprocessor check that matches WebGPUContext.h.
+#if __has_include(<emscripten/webgpu.h>)
+  #define FE_HAS_EM_WEBGPU 1
+#else
+  #define FE_HAS_EM_WEBGPU 0
+#endif
+
+// JS-side feature detection: returns 1 if navigator.gpu exists.
+extern "C" int fe_webgpu_supported();
+EM_JS(int, fe_webgpu_supported, (), {
+  return (typeof navigator !== 'undefined' && navigator.gpu) ? 1 : 0;
+});
+
+// Helper to print a clear console error when unsupported
+extern "C" void fe_webgpu_log_unsupported();
+EM_JS(void, fe_webgpu_log_unsupported, (), {
+  console.error(
+    "[FickerEngine] WebGPU is not available in this browser. " +
+    "Use Chrome/Edge 113+ or Safari 17+. On Firefox, set dom.webgpu.enabled=true."
+  );
+});
+
+// -------- Minimal WGSL (positions only + MVP; fixed color) -------------------
 static const char* kWGSL = R"(
 struct MVP { mvp : mat4x4<f32> };
 @group(0) @binding(0) var<uniform> uMVP : MVP;
@@ -27,11 +58,13 @@ fn fs_main() -> @location(0) vec4<f32> {
 }
 )";
 
+// -------- Singleton ----------------------------------------------------------
 WebGPUContext& WebGPUContext::Get() {
     static WebGPUContext ctx;
     return ctx;
 }
 
+// -------- Public API ---------------------------------------------------------
 void WebGPUContext::Init(const char* canvasSelector) {
     if (initialized) return;
 
@@ -45,27 +78,55 @@ void WebGPUContext::Init(const char* canvasSelector) {
     initialized = true;
 }
 
+void WebGPUContext::ConfigureSurface(uint32_t w, uint32_t h) {
+    width = w; height = h;
+    configureSurface_();
+}
+
+WGPUTextureView WebGPUContext::BeginFrame() {
+    WGPUSurfaceTexture st = {};
+    wgpuSurfaceGetCurrentTexture(surface, &st);
+    if (!st.texture) return nullptr;
+
+    WGPUTextureViewDescriptor vd = {};
+    return wgpuTextureCreateView(st.texture, &vd);
+}
+
+void WebGPUContext::EndFrame(WGPUTextureView /*view*/) {
+    wgpuSurfacePresent(surface);
+}
+
+// -------- Internals ----------------------------------------------------------
 void WebGPUContext::createDevice_() {
-    // Emscripten provides a default device
-    device = emscripten_webgpu_get_device();
+    if (!fe_webgpu_supported()) {
+        device = nullptr;
+        fe_webgpu_log_unsupported();
+        return;
+    }
+    device = emscripten_webgpu_get_device(); // safe now; won’t assert
+    if (!device) {
+        fe_webgpu_log_unsupported();
+        return;
+    }
     queue  = wgpuDeviceGetQueue(device);
 }
 
 void WebGPUContext::createSurface_(const char* canvasSelector) {
-    // Emscripten surface from a canvas CSS selector
+#if FE_HAS_EM_WEBGPU
+    // Create a surface from a Canvas element by CSS selector (default "#canvas")
     WGPUSurfaceDescriptorFromCanvasHTMLSelector canvasDesc = {};
     canvasDesc.chain.sType = WGPUSType_SurfaceDescriptorFromCanvasHTMLSelector;
-    canvasDesc.selector = canvasSelector;
+    canvasDesc.selector    = canvasSelector;
 
     WGPUSurfaceDescriptor surfDesc = {};
     surfDesc.nextInChain = reinterpret_cast<WGPUChainedStruct*>(&canvasDesc);
 
     surface = wgpuInstanceCreateSurface(instance, &surfDesc);
-}
-
-void WebGPUContext::ConfigureSurface(uint32_t w, uint32_t h) {
-    width = w; height = h;
-    configureSurface_();
+#else
+    // If the runner didn't expose emscripten/webgpu.h, surface creation
+    // via selector won't be available. Fail clearly (assertions are on).
+    surface = nullptr;
+#endif
 }
 
 void WebGPUContext::configureSurface_() {
@@ -83,13 +144,13 @@ void WebGPUContext::configureSurface_() {
 }
 
 void WebGPUContext::createMVPResources_() {
-    // 16 floats for mat4
+    // Uniform buffer for a 4x4 matrix (16 floats)
     WGPUBufferDescriptor bd = {};
     bd.usage = WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst;
     bd.size  = sizeof(float) * 16;
     mvpBuffer = wgpuDeviceCreateBuffer(device, &bd);
 
-    // BindGroupLayout
+    // Bind group layout: uMVP @group(0) @binding(0)
     WGPUBindGroupLayoutEntry entry = {};
     entry.binding    = 0;
     entry.visibility = WGPUShaderStage_Vertex;
@@ -100,7 +161,7 @@ void WebGPUContext::createMVPResources_() {
     bld.entries    = &entry;
     bindGroupLayout = wgpuDeviceCreateBindGroupLayout(device, &bld);
 
-    // BindGroup
+    // Bind group
     WGPUBindGroupEntry be = {};
     be.binding = 0;
     be.buffer  = mvpBuffer;
@@ -115,7 +176,7 @@ void WebGPUContext::createMVPResources_() {
 }
 
 void WebGPUContext::createPipeline_() {
-    // WGSL shader
+    // WGSL module
     WGPUShaderModuleWGSLDescriptor wgsl = {};
     wgsl.chain.sType = WGPUSType_ShaderModuleWGSLDescriptor;
     wgsl.code = kWGSL;
@@ -135,13 +196,13 @@ void WebGPUContext::createPipeline_() {
     vbl.attributeCount = 1;
     vbl.attributes     = &attr;
 
-    // Pipeline layout
+    // Pipeline layout (bind group 0 -> MVP)
     WGPUPipelineLayoutDescriptor pld = {};
     pld.bindGroupLayoutCount = 1;
     pld.bindGroupLayouts     = &bindGroupLayout;
     pipelineLayout = wgpuDeviceCreatePipelineLayout(device, &pld);
 
-    // Fragment state
+    // Fragment state (one color attachment)
     WGPUColorTargetState color = {};
     color.format    = surfaceFormat;
     color.writeMask = WGPUColorWriteMask_All;
@@ -152,9 +213,10 @@ void WebGPUContext::createPipeline_() {
     fs.targetCount = 1;
     fs.targets     = &color;
 
-    // Render pipeline
+    // Render pipeline (LineList for grid; triangles also supported)
     WGPURenderPipelineDescriptor rp = {};
     rp.layout = pipelineLayout;
+
     rp.vertex.module = shader;
     rp.vertex.entryPoint = "vs_main";
     rp.vertex.bufferCount = 1;
@@ -170,19 +232,6 @@ void WebGPUContext::createPipeline_() {
     rp.multisample.count = 1;
 
     pipeline = wgpuDeviceCreateRenderPipeline(device, &rp);
-}
-
-WGPUTextureView WebGPUContext::BeginFrame() {
-    WGPUSurfaceTexture st = {};
-    wgpuSurfaceGetCurrentTexture(surface, &st);
-    if (!st.texture) return nullptr;
-
-    WGPUTextureViewDescriptor vd = {};
-    return wgpuTextureCreateView(st.texture, &vd);
-}
-
-void WebGPUContext::EndFrame(WGPUTextureView /*view*/) {
-    wgpuSurfacePresent(surface);
 }
 
 #endif // FE_WEBGPU
