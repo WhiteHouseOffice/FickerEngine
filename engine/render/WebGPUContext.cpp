@@ -1,41 +1,34 @@
 #if defined(FE_WEBGPU)
 
 #include "WebGPUContext.h"
-#include <string.h>   // memcpy, memset
+#include <string.h>
 #include <stdint.h>
 
-// -------- Header environment checks -----------------------------------------
-// We rely on Emscripten's WebGPU. Different runners expose headers in slightly
-// different paths, so the header *selection* is handled in WebGPUContext.h via
-// __has_include. Here we only need the runtime helper symbol below.
+// Resilient WebGPU headers are handled in WebGPUContext.h
 
-// Emscripten provides a device getter in JS runtime:
-extern "C" WGPUDevice emscripten_webgpu_get_device(void);
-
-// Some declarations used below are only defined in the Emscripten header.
-// If we compiled with -sUSE_WEBGPU=1 (compile & link), emscripten/webgpu.h
-// will be visible and the types will exist. To be safe, we gate Canvas surface
-// creation behind a preprocessor check that matches WebGPUContext.h.
-#if __has_include(<emscripten/webgpu.h>)
-  #define FE_HAS_EM_WEBGPU 1
+// --- Emscripten integration (for EM_JS) ---
+#if __has_include(<emscripten/emscripten.h>)
+  #include <emscripten/emscripten.h>
+  #define FE_HAS_EM 1
 #else
-  #define FE_HAS_EM_WEBGPU 0
+  #define FE_HAS_EM 0
 #endif
 
-// JS-side feature detection: returns 1 if navigator.gpu exists.
-extern "C" int fe_webgpu_supported();
+// Emscripten runtime device getter (declared in JS runtime)
+extern "C" WGPUDevice emscripten_webgpu_get_device(void);
+
+// JS-side feature detection (guarded so native builds still compile)
+#if FE_HAS_EM
 EM_JS(int, fe_webgpu_supported, (), {
   return (typeof navigator !== 'undefined' && navigator.gpu) ? 1 : 0;
 });
-
-// Helper to print a clear console error when unsupported
-extern "C" void fe_webgpu_log_unsupported();
 EM_JS(void, fe_webgpu_log_unsupported, (), {
-  console.error(
-    "[FickerEngine] WebGPU is not available in this browser. " +
-    "Use Chrome/Edge 113+ or Safari 17+. On Firefox, set dom.webgpu.enabled=true."
-  );
+  console.error("[FickerEngine] WebGPU not available. Use Chrome/Edge 113+ or Safari 17+. On Firefox: about:config → dom.webgpu.enabled = true.");
 });
+#else
+static inline int  fe_webgpu_supported() { return 0; }
+static inline void fe_webgpu_log_unsupported() {}
+#endif
 
 // -------- Minimal WGSL (positions only + MVP; fixed color) -------------------
 static const char* kWGSL = R"(
