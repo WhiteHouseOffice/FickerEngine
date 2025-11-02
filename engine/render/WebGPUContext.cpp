@@ -3,6 +3,9 @@
 #include "WebGPUContext.h"
 #include <string.h>
 
+// Forward declare the Emscripten helper so we don’t need extra headers.
+extern "C" WGPUDevice emscripten_webgpu_get_device(void);
+
 // Minimal WGSL: positions only + MVP; fixed color
 static const char* kWGSL = R"(
 struct MVP { mvp : mat4x4<f32> };
@@ -44,12 +47,12 @@ void WebGPUContext::Init(const char* canvasSelector) {
 
 void WebGPUContext::createDevice_() {
     // Emscripten provides a default device
-    WGPUDevice dev = emscripten_webgpu_get_device();
-    device = dev;
+    device = emscripten_webgpu_get_device();
     queue  = wgpuDeviceGetQueue(device);
 }
 
 void WebGPUContext::createSurface_(const char* canvasSelector) {
+    // Emscripten surface from a canvas CSS selector
     WGPUSurfaceDescriptorFromCanvasHTMLSelector canvasDesc = {};
     canvasDesc.chain.sType = WGPUSType_SurfaceDescriptorFromCanvasHTMLSelector;
     canvasDesc.selector = canvasSelector;
@@ -66,7 +69,6 @@ void WebGPUContext::ConfigureSurface(uint32_t w, uint32_t h) {
 }
 
 void WebGPUContext::configureSurface_() {
-    // BGRA8Unorm is widely supported in browsers
     surfaceFormat = WGPUTextureFormat_BGRA8Unorm;
 
     WGPUSurfaceConfiguration sc = {};
@@ -145,10 +147,10 @@ void WebGPUContext::createPipeline_() {
     color.writeMask = WGPUColorWriteMask_All;
 
     WGPUFragmentState fs = {};
-    fs.module     = shader;
-    fs.entryPoint = "fs_main";
-    fs.targetCount= 1;
-    fs.targets    = &color;
+    fs.module      = shader;
+    fs.entryPoint  = "fs_main";
+    fs.targetCount = 1;
+    fs.targets     = &color;
 
     // Render pipeline
     WGPURenderPipelineDescriptor rp = {};

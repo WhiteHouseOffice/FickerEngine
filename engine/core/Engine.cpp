@@ -1,4 +1,8 @@
-// add this include alongside others:
+#include "core/Engine.h"
+#include "core/Time.h"
+#include "game/Scene.h"
+#include "game/Game.h"
+#include "math/MiniMath.h"
 #include "render/WebGPUContext.h"
 #include <webgpu/webgpu.h>
 
