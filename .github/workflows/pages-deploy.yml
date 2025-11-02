@@ -24,14 +24,21 @@ jobs:
       - name: Setup Emscripten
         uses: mymindstorm/setup-emsdk@v14
         with:
-          version: latest
+          # Pin a modern version known to ship WebGPU headers
+          version: 3.1.62
           actions-cache-folder: emsdk-cache
 
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
       - name: Configure (emcmake)
-        run: emcmake cmake -S . -B webbuild -G Ninja
+        run: emcmake cmake -S . -B webbuild -G Ninja -D BUILD_WEB=ON
 
       - name: Build
         run: cmake --build webbuild -j
+
+      - name: List build outputs (debug)
+        run: ls -lah webbuild
 
       - name: Prepare site
         run: |
@@ -44,6 +51,7 @@ jobs:
         uses: actions/upload-pages-artifact@v3
         with:
           path: dist
+          if-no-files-found: error
 
   deploy:
     environment:
@@ -57,5 +65,4 @@ jobs:
         uses: actions/deploy-pages@v4
 
       - name: Show Live URL in summary
-        run: |
-          echo "### ✅ Live preview: ${{ steps.deployment.outputs.page_url }}" >> $GITHUB_STEP_SUMMARY
+        run: echo "### ✅ Live preview: ${{ steps.deployment.outputs.page_url }}" >> $GITHUB_STEP_SUMMARY
