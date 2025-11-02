@@ -1,10 +1,11 @@
-#include "Scene.h"
+#include "game/Scene.h"
 #include "geom/GridPlane.h"
-#include "geom/MarkerCross.h"
-void Scene::Build(){
-    grid.mesh.Upload(GridPlane::Build(20,1.0f));
-    grid.color = {0.6f,0.6f,0.6f};
-    marker.mesh.Upload(MarkerCross::Build(0.1f,0.25f));
-    marker.color = {1.0f,1.0f,1.0f};
-    drawOrder = { &grid, &marker };
+#include "render/RenderMesh.h"
+
+void Scene::Build() {
+    geom::GridData g = geom::BuildGrid(40.f, 1.f); // 40×40 meters, 1m spacing
+    render::MeshUpload up;
+    up.positions = std::move(g.positions);
+    up.indices   = std::move(g.indices);
+    render::UploadGrid(up);
 }
