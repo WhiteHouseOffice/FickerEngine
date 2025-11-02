@@ -1,25 +1,24 @@
-#include "core/Engine.h"
-
 #ifdef __EMSCRIPTEN__
   #include <emscripten/emscripten.h>
 #endif
 
-static Engine g_engine;
+#include "core/Engine.h"
 
 static void tick(void*) {
-    g_engine.update();
-    g_engine.render();
+  Engine::instance().stepOnce();
 }
 
-int main(int /*argc*/, char** /*argv*/) {
-    g_engine.init();
+int main() {
+  Engine::instance().init();
 
 #ifdef __EMSCRIPTEN__
-    // 0 = browser-driven FPS, 1 = simulate infinite loop
-    emscripten_set_main_loop_arg(tick, nullptr, 0, 1);
+  // Drive the engine via the browser loop
+  emscripten_set_main_loop_arg(tick, nullptr, 0, true);
 #else
-    for (;;) { tick(nullptr); }
+  // Simple fallback loop if running natively
+  for (;;) Engine::instance().stepOnce();
 #endif
 
-    return 0;
+  Engine::instance().shutdown();
+  return 0;
 }

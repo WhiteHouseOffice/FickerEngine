@@ -1,11 +1,14 @@
 #include "game/Scene.h"
-#include "geom/GridPlane.h"
-#include "render/RenderMesh.h"
+#include "game/GameObject.h"
 
-void Scene::Build() {
-    auto g = geom::BuildGrid(40.f, 1.f);  // 40×40m, 1m spacing
-    render::MeshUpload up;
-    up.positions = std::move(g.positions);
-    up.indices   = std::move(g.indices);
-    render::UploadGrid(up);
+void Scene::AddObject(const std::shared_ptr<GameObject>& obj) {
+  objects.push_back(obj);
+}
+
+void Scene::Update(float /*dt*/) {
+  // No-op for now (kept minimal; avoids extra deps)
+}
+
+void Scene::Draw() {
+  // Intentionally empty until render pass & pipeline are wired
 }
