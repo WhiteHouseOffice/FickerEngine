@@ -1,5 +1,5 @@
 #pragma once
-#include "engine/render/RenderMesh.h"
+#include "render/RenderMesh.h"
 #include <array>
 struct GameObject {
     RenderMesh mesh;
