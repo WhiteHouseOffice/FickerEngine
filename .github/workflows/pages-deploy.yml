@@ -6,6 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
+  actions: write
   contents: read
   pages: write
   id-token: write
@@ -25,7 +26,6 @@ jobs:
         uses: mymindstorm/setup-emsdk@v14
         with:
           version: 3.1.62
-          actions-cache-folder: emsdk-cache
 
       - name: Configure Pages
         uses: actions/configure-pages@v5
@@ -50,7 +50,6 @@ jobs:
         uses: actions/upload-pages-artifact@v3
         with:
           path: dist
-          if-no-files-found: error
 
   deploy:
     environment:
