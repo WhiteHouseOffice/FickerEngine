@@ -40,15 +40,14 @@ if (EMSCRIPTEN OR BUILD_WEB)
     target_compile_definitions(FickerEngine PRIVATE FE_WEB=1 FE_WEBGPU=1)
 
     # IMPORTANT: enable WebGPU for BOTH compile and link so headers & libs resolve
-    target_compile_options(FickerEngine PRIVATE
-        "-sUSE_WEBGPU=1"
-    )
-    target_link_options(FickerEngine PRIVATE
+    target_compile_options(FickerEngine PRIVATE "-sUSE_WEBGPU=1")
+target_link_options(FickerEngine PRIVATE
     "-sUSE_WEBGPU=1"
     "-sALLOW_MEMORY_GROWTH=1"
     "-sASSERTIONS=1"
     "-sASYNCIFY"
 )
+
 
 # --- Native (placeholder; no GL yet) ---
 else()
