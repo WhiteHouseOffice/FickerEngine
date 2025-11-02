@@ -3,10 +3,10 @@
 #include <vector>
 
 #if defined(FE_WEBGPU)
-  #if __has_include(<webgpu/webgpu.h>)
-    #include <webgpu/webgpu.h>
-  #elif __has_include(<emscripten/webgpu.h>)
+  #if defined(__EMSCRIPTEN__)
     #include <emscripten/webgpu.h>
+  #else
+    #include <webgpu/webgpu.h>
   #endif
 #endif
 
@@ -24,8 +24,8 @@ struct GPUData {
     WGPUBuffer vbo = nullptr;
     WGPUBuffer ibo = nullptr;
     uint32_t   indexCount = 0;
-    WGPUIndexFormat indexFormat;           // set in .cpp
-    WGPUPrimitiveTopology topology;        // set in .cpp
+    WGPUIndexFormat indexFormat;        // set in .cpp
+    WGPUPrimitiveTopology topology;     // set in .cpp
 #else
     void* _ = nullptr;
 #endif

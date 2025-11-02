@@ -4,7 +4,6 @@
 #include <string.h>
 #include <stdint.h>
 
-// ---- Emscripten integration for EM_JS / EM_ASYNC_JS ----
 #if __has_include(<emscripten/emscripten.h>)
   #include <emscripten/emscripten.h>
   #define FE_HAS_EM 1
@@ -12,7 +11,6 @@
   #define FE_HAS_EM 0
 #endif
 
-// Surface creation helpers (from Canvas CSS selector)
 #if FE_HAS_EM && __has_include(<emscripten/html5_webgpu.h>)
   #include <emscripten/html5_webgpu.h>
   #define FE_HAS_SURFACE 1
@@ -20,22 +18,15 @@
   #define FE_HAS_SURFACE 0
 #endif
 
-// Provided by Emscripten when using -sUSE_WEBGPU=1
 extern "C" WGPUDevice emscripten_webgpu_get_device(void);
 
 #if FE_HAS_EM
-// Availability check
 EM_JS(int, fe_webgpu_supported, (), {
   return (typeof navigator !== 'undefined' && navigator.gpu) ? 1 : 0;
 });
-
-// Friendly message if not supported
 EM_JS(void, fe_webgpu_log_unsupported, (), {
-  console.error("[FickerEngine] WebGPU not available. Use Chrome/Edge 113+ or Safari 17+. "
-                + "On Firefox: about:config → dom.webgpu.enabled = true.");
+  console.error("[FickerEngine] WebGPU not available. Use Chrome/Edge 113+ or Safari 17+. On Firefox: about:config → dom.webgpu.enabled=true.");
 });
-
-// Async adapter + device creation (requires -sASYNCIFY)
 EM_ASYNC_JS(int, fe_webgpu_init_async, (), {
   if (!navigator.gpu) return 0;
   try {
@@ -43,11 +34,14 @@ EM_ASYNC_JS(int, fe_webgpu_init_async, (), {
     if (!adapter) return 0;
     const device  = await adapter.requestDevice();
 
-    // Set BOTH globals so all emscripten variants see it
-    if (typeof Module !== 'undefined') Module['wgpuDevice'] = device;
+    if (typeof Module !== 'undefined') {
+      Module['wgpuDevice'] = device;
+      Module['preinitializedWebGPUDevice'] = device;
+    }
     globalThis.wgpuDevice = device;
+    globalThis.preinitializedWebGPUDevice = device;
 
-    console.log("[FickerEngine] WebGPU device ready:", device !== undefined);
+    console.log("[FickerEngine] WebGPU device ready:", !!device);
     return 1;
   } catch (e) {
     console.error("[FickerEngine] WebGPU init failed:", e);
@@ -60,7 +54,7 @@ static inline void fe_webgpu_log_unsupported() {}
 static inline int  fe_webgpu_init_async() { return 0; }
 #endif
 
-// ---- Minimal WGSL (positions only, uniform MVP) ----
+// Simple WGSL: vertex->MVP, fragment = light gray
 static const char* kWGSL = R"(
 struct MVP { mvp : mat4x4<f32> };
 @group(0) @binding(0) var<uniform> uMVP : MVP;
@@ -77,13 +71,9 @@ fn vs_main(input : VSIn) -> VSOut {
 
 @fragment
 fn fs_main() -> @location(0) vec4<f32> {
-  return vec4<f32>(0.85, 0.85, 0.9, 1.0);
+  return vec4<f32>(0.8, 0.82, 0.86, 1.0);
 }
 )";
-
-// ============================================================================
-// WebGPUContext Implementation
-// ============================================================================
 
 WebGPUContext& WebGPUContext::Get() {
     static WebGPUContext instance;
@@ -93,19 +83,14 @@ WebGPUContext& WebGPUContext::Get() {
 void WebGPUContext::Init(const char* canvasSelector) {
     if (initialized) return;
 
-    // Instance (ok to pass nullptr on web)
     instance = wgpuCreateInstance(nullptr);
-
     createDevice_();
     if (!device) { fe_webgpu_log_unsupported(); return; }
 
     createSurface_(canvasSelector);
     if (!surface) { fe_webgpu_log_unsupported(); return; }
 
-    // Default surface format for browsers
     surfaceFormat = WGPUTextureFormat_BGRA8Unorm;
-
-    // Create uniform + pipeline once
     createMVPResources_();
     createPipeline_();
 
@@ -123,7 +108,6 @@ void WebGPUContext::ConfigureSurface(uint32_t w, uint32_t h) {
     sc.width       = width;
     sc.height      = height;
     sc.presentMode = WGPUPresentMode_Fifo;
-
     wgpuSurfaceConfigure(surface, &sc);
 }
 
@@ -160,7 +144,6 @@ void WebGPUContext::createSurface_(const char* canvasSelector) {
 
     WGPUSurfaceDescriptor sd = {};
     sd.nextInChain = reinterpret_cast<WGPUChainedStruct*>(&canvasDesc);
-
     surface = wgpuInstanceCreateSurface(instance, &sd);
 #else
     (void)canvasSelector;
@@ -169,13 +152,11 @@ void WebGPUContext::createSurface_(const char* canvasSelector) {
 }
 
 void WebGPUContext::createMVPResources_() {
-    // Uniform buffer for a 4x4 matrix
     WGPUBufferDescriptor bd = {};
     bd.usage = WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst;
     bd.size  = sizeof(float) * 16;
     mvpBuffer = wgpuDeviceCreateBuffer(device, &bd);
 
-    // BindGroupLayout: uMVP @group(0) @binding(0)
     WGPUBindGroupLayoutEntry e = {};
     e.binding     = 0;
     e.visibility  = WGPUShaderStage_Vertex;
@@ -186,7 +167,6 @@ void WebGPUContext::createMVPResources_() {
     bld.entries    = &e;
     bindGroupLayout = wgpuDeviceCreateBindGroupLayout(device, &bld);
 
-    // BindGroup
     WGPUBindGroupEntry be = {};
     be.binding = 0;
     be.buffer  = mvpBuffer;
@@ -201,7 +181,6 @@ void WebGPUContext::createMVPResources_() {
 }
 
 void WebGPUContext::createPipeline_() {
-    // WGSL module
     WGPUShaderModuleWGSLDescriptor wgsl = {};
     wgsl.chain.sType = WGPUSType_ShaderModuleWGSLDescriptor;
     wgsl.code = kWGSL;
@@ -210,7 +189,6 @@ void WebGPUContext::createPipeline_() {
     smd.nextInChain = reinterpret_cast<WGPUChainedStruct*>(&wgsl);
     shader = wgpuDeviceCreateShaderModule(device, &smd);
 
-    // Vertex layout: vec3<f32> at location 0
     WGPUVertexAttribute attr = {};
     attr.shaderLocation = 0;
     attr.offset = 0;
@@ -221,13 +199,11 @@ void WebGPUContext::createPipeline_() {
     vbl.attributeCount = 1;
     vbl.attributes     = &attr;
 
-    // Pipeline layout
     WGPUPipelineLayoutDescriptor pld = {};
     pld.bindGroupLayoutCount = 1;
     pld.bindGroupLayouts     = &bindGroupLayout;
     pipelineLayout = wgpuDeviceCreatePipelineLayout(device, &pld);
 
-    // Fragment state
     WGPUColorTargetState target = {};
     target.format    = surfaceFormat;
     target.writeMask = WGPUColorWriteMask_All;
@@ -238,7 +214,6 @@ void WebGPUContext::createPipeline_() {
     fs.targetCount = 1;
     fs.targets     = &target;
 
-    // Render pipeline (LineList for grid)
     WGPURenderPipelineDescriptor rp = {};
     rp.layout = pipelineLayout;
     rp.vertex.module = shader;

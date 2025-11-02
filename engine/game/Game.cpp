@@ -1,9 +1,23 @@
 #include "game/Game.h"
-#include "math/MiniMath.h"
-#include "core/Input.h"   // authoritative input (existing in engine/core/)
+#include "core/Input.h"
 #include <cstdio>
-#include <algorithm>
 #include <cmath>
+
+#if !__has_include("math/MiniMath.h")
+static inline Vec3 normalize(const Vec3& v){ float L=std::sqrt(v.x*v.x+v.y*v.y+v.z*v.z); if(L==0) return {0,0,0}; return {v.x/L,v.y/L,v.z/L}; }
+static inline Vec3 cross(const Vec3& a,const Vec3& b){ return { a.y*b.z-a.z*b.y, a.z*b.x-a.x*b.z, a.x*b.y-a.y*b.x }; }
+static Mat4 lookAt(const Vec3& eye, const Vec3& at, const Vec3& up) {
+    Vec3 f = normalize({at.x-eye.x, at.y-eye.y, at.z-eye.z});
+    Vec3 s = normalize(cross(f, up));
+    Vec3 u = cross(s, f);
+    Mat4 M{};
+    M.m[0]= s.x; M.m[4]= s.y; M.m[8] = s.z; M.m[12]= -(s.x*eye.x + s.y*eye.y + s.z*eye.z);
+    M.m[1]= u.x; M.m[5]= u.y; M.m[9] = u.z; M.m[13]= -(u.x*eye.x + u.y*eye.y + u.z*eye.z);
+    M.m[2]= -f.x;M.m[6]= -f.y;M.m[10]= -f.z;M.m[14]=  (f.x*eye.x + f.y*eye.y + f.z*eye.z);
+    M.m[3]= 0;   M.m[7]= 0;   M.m[11]= 0;   M.m[15]= 1;
+    return M;
+}
+#endif
 
 void Game::Init() {
     camPos = { 0.f, 2.f, 5.f };
@@ -28,7 +42,6 @@ void Game::Update(float dt) {
 
     camPos += delta;
 
-    // Log 4×/s
     logTimer += dt;
     if (logTimer >= 0.25f) {
         logTimer = 0.f;

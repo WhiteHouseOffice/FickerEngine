@@ -2,25 +2,10 @@
 #include <cstdint>
 
 #if defined(FE_WEBGPU)
-  #if __has_include(<webgpu/webgpu.h>)
-    #include <webgpu/webgpu.h>
-  #elif __has_include(<emscripten/webgpu.h>)
+  #if defined(__EMSCRIPTEN__)
     #include <emscripten/webgpu.h>
   #else
-    // Minimal fallbacks so native compiles; not used at runtime
-    typedef void* WGPUInstance;
-    typedef void* WGPUDevice;
-    typedef void* WGPUQueue;
-    typedef void* WGPUSurface;
-    typedef void* WGPUTextureView;
-    typedef unsigned int WGPUTextureFormat;
-    typedef unsigned int WGPUShaderModule;
-    typedef unsigned int WGPURenderPipeline;
-    typedef unsigned int WGPUBuffer;
-    typedef unsigned int WGPUBindGroupLayout;
-    typedef unsigned int WGPUBindGroup;
-    typedef unsigned int WGPUPipelineLayout;
-    #define WGPUTextureFormat_BGRA8Unorm 87u
+    #include <webgpu/webgpu.h>
   #endif
 #endif
 
@@ -33,14 +18,14 @@ public:
     WGPUTextureView BeginFrame();
     void EndFrame(WGPUTextureView view);
 
-    // Exposed so Engine can write uniforms / submit
+    // Exposed to engine
     WGPUInstance       instance = nullptr;
     WGPUDevice         device   = nullptr;
     WGPUQueue          queue    = nullptr;
     WGPUSurface        surface  = nullptr;
     WGPUTextureFormat  surfaceFormat = WGPUTextureFormat_BGRA8Unorm;
 
-    // Simple uniform + pipeline for the grid
+    // Minimal pipeline resources
     WGPUBuffer             mvpBuffer      = nullptr;
     WGPUBindGroupLayout    bindGroupLayout= nullptr;
     WGPUBindGroup          bindGroup      = nullptr;
@@ -57,4 +42,3 @@ private:
     void createMVPResources_();
     void createPipeline_();
 };
-
