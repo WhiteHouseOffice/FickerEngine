@@ -36,10 +36,10 @@ if (EMSCRIPTEN OR BUILD_WEB)
     set(CMAKE_EXECUTABLE_SUFFIX ".html")
     target_compile_definitions(FickerEngine PRIVATE FE_WEB=1 PLATFORM_WEB=1)
     target_link_options(FickerEngine PRIVATE
-        "-sLEGACY_GL_EMULATION=1"
-        "-sMIN_WEBGL_VERSION=1"
-        "-sMAX_WEBGL_VERSION=2"
-        "-sALLOW_MEMORY_GROWTH=1"
+    "-sLEGACY_GL_EMULATION=1"
+    "-sMIN_WEBGL_VERSION=1"
+    "-sMAX_WEBGL_VERSION=2"
+    "-sALLOW_MEMORY_GROWTH=1"
     )
 else()
     message(STATUS "Configuring for native OpenGL")

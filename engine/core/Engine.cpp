@@ -9,8 +9,6 @@
   #define GL_GLEXT_PROTOTYPES 1
   #include <GLES2/gl2.h>
   #include <GLES2/gl2ext.h>
-  // Legacy fixed-function calls are emulated by Emscripten;
-  // declare them so the compiler is happy with GLES2 headers.
   extern "C" {
     void glMatrixMode(unsigned int);
     void glLoadMatrixf(const float*);

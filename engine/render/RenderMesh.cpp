@@ -1,11 +1,9 @@
 #include "RenderMesh.h"
 
 #if defined(FE_WEB)
-  // Emscripten/WebGL path (GLES2)
   #define GL_GLEXT_PROTOTYPES 1
   #include <GLES2/gl2.h>
   #include <GLES2/gl2ext.h>
-  // Emscripten provides LEGACY_GL_EMULATION at runtime, but GLES headers do not declare these:
   extern "C" {
     void glEnableClientState(unsigned int);
     void glDisableClientState(unsigned int);
@@ -13,7 +11,6 @@
     void glColor3f(float, float, float);
   }
 #else
-  // Desktop GL
   #include <GL/glew.h>
   #include <GL/gl.h>
 #endif
