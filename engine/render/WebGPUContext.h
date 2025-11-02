@@ -1,43 +1,35 @@
 #pragma once
 #include <cstdint>
 
-// ────────────────────────────────────────────────────────────
-// Make the header self-sufficient for editors / native builds.
-// On web (Emscripten) we include the real header.
-// Else we provide dummy typedefs + structs so IntelliSense is happy.
-// ────────────────────────────────────────────────────────────
+// Make this header compile across different Emscripten versions.
+// Prefer emscripten/webgpu.h, then webgpu/webgpu.h, else provide safe typedefs.
 #if defined(__EMSCRIPTEN__)
-  #include <emscripten/webgpu.h>
+  #if __has_include(<emscripten/webgpu.h>)
+    #include <emscripten/webgpu.h>
+  #elif __has_include(<webgpu/webgpu.h>)
+    #include <webgpu/webgpu.h>
+  #else
+    #define FE_WGPU_FAKE 1
+  #endif
 #else
-  // Handles
-  typedef void* WGPUInstance;
-  typedef void* WGPUDevice;
-  typedef void* WGPUQueue;
-  typedef void* WGPUSurface;
-  typedef void* WGPUTexture;
-  typedef void* WGPUTextureView;
-  typedef void* WGPUShaderModule;
-  typedef void* WGPURenderPipeline;
-  typedef void* WGPUBuffer;
-  typedef void* WGPUBindGroupLayout;
-  typedef void* WGPUBindGroup;
-  typedef void* WGPUPipelineLayout;
+  #if __has_include(<webgpu/webgpu.h>)
+    #include <webgpu/webgpu.h>
+  #else
+    #define FE_WGPU_FAKE 1
+  #endif
+#endif
 
-  // Basic scalar/enums as uints (values are placeholders for editor only)
-  typedef uint32_t WGPUTextureFormat;
-  typedef uint32_t WGPUPresentMode;
-  typedef uint32_t WGPUTextureUsageFlags;
-  typedef uint32_t WGPUBufferUsageFlags;
-  typedef uint32_t WGPUShaderStageFlags;
-  typedef uint32_t WGPUBufferBindingType;
-  typedef uint32_t WGPUColorWriteMaskFlags;
-  typedef uint32_t WGPUPrimitiveTopology;
-  typedef uint32_t WGPUVertexFormat;
-  typedef uint32_t WGPUFrontFace;
-  typedef uint32_t WGPUCullMode;
-  typedef uint32_t WGPUIndexFormat;
+#ifdef FE_WGPU_FAKE
+  // Minimal fake types so IntelliSense / native builds don't error.
+  typedef void* WGPUInstance; typedef void* WGPUDevice; typedef void* WGPUQueue;
+  typedef void* WGPUSurface;  typedef void* WGPUTexture; typedef void* WGPUTextureView;
+  typedef void* WGPUShaderModule; typedef void* WGPURenderPipeline; typedef void* WGPUBuffer;
+  typedef void* WGPUBindGroupLayout; typedef void* WGPUBindGroup; typedef void* WGPUPipelineLayout;
+  typedef uint32_t WGPUTextureFormat; typedef uint32_t WGPUPresentMode; typedef uint32_t WGPUTextureUsageFlags;
+  typedef uint32_t WGPUBufferUsageFlags; typedef uint32_t WGPUShaderStageFlags; typedef uint32_t WGPUBufferBindingType;
+  typedef uint32_t WGPUColorWriteMaskFlags; typedef uint32_t WGPUPrimitiveTopology; typedef uint32_t WGPUVertexFormat;
+  typedef uint32_t WGPUFrontFace; typedef uint32_t WGPUCullMode; typedef uint32_t WGPUIndexFormat;
 
-  // Constants used by our .cpp (dummy values for editor)
   #ifndef WGPUTextureFormat_BGRA8Unorm
   #define WGPUTextureFormat_BGRA8Unorm 87u
   #endif
@@ -83,130 +75,8 @@
   #ifndef WGPUIndexFormat_Uint32
   #define WGPUIndexFormat_Uint32 2u
   #endif
+#endif
 
-  // Chained struct base (dummy)
-  typedef struct WGPUChainedStruct {
-    const struct WGPUChainedStruct* next;
-    uint32_t sType;
-  } WGPUChainedStruct;
-
-  // Surface config/texture (subset)
-  typedef struct WGPUSurfaceConfiguration {
-    WGPUDevice device;
-    WGPUTextureFormat format;
-    WGPUTextureUsageFlags usage;
-    uint32_t width, height;
-    WGPUPresentMode presentMode;
-    const WGPUChainedStruct* nextInChain;
-  } WGPUSurfaceConfiguration;
-
-  typedef struct WGPUSurfaceTexture {
-    WGPUTexture texture;
-    uint32_t status;
-    const WGPUChainedStruct* suboptimal;
-  } WGPUSurfaceTexture;
-
-  // Buffer/bind group descriptors (subset)
-  typedef struct WGPUBufferDescriptor {
-    const WGPUChainedStruct* nextInChain;
-    const char* label;
-    uint64_t size;
-    WGPUBufferUsageFlags usage;
-    bool mappedAtCreation;
-  } WGPUBufferDescriptor;
-
-  typedef struct WGPUBindGroupLayoutEntry {
-    const WGPUChainedStruct* nextInChain;
-    uint32_t binding;
-    WGPUShaderStageFlags visibility;
-    struct { WGPUBufferBindingType type; bool hasDynamicOffset; uint64_t minBindingSize; } buffer;
-  } WGPUBindGroupLayoutEntry;
-
-  typedef struct WGPUBindGroupLayoutDescriptor {
-    const WGPUChainedStruct* nextInChain;
-    const char* label;
-    uint32_t entryCount;
-    const WGPUBindGroupLayoutEntry* entries;
-  } WGPUBindGroupLayoutDescriptor;
-
-  typedef struct WGPUBindGroupEntry {
-    const WGPUChainedStruct* nextInChain;
-    uint32_t binding;
-    WGPUBuffer buffer;
-    uint64_t offset;
-    uint64_t size;
-  } WGPUBindGroupEntry;
-
-  typedef struct WGPUBindGroupDescriptor {
-    const WGPUChainedStruct* nextInChain;
-    const char* label;
-    WGPUBindGroupLayout layout;
-    uint32_t entryCount;
-    const WGPUBindGroupEntry* entries;
-  } WGPUBindGroupDescriptor;
-
-  // Shader/pipeline descriptors (subset)
-  typedef struct WGPUShaderModuleWGSLDescriptor {
-    WGPUChainedStruct chain;
-    const char* code;
-  } WGPUShaderModuleWGSLDescriptor;
-
-  typedef struct WGPUShaderModuleDescriptor {
-    const WGPUChainedStruct* nextInChain;
-    const char* label;
-  } WGPUShaderModuleDescriptor;
-
-  typedef struct WGPUVertexAttribute {
-    WGPUVertexFormat format;
-    uint64_t offset;
-    uint32_t shaderLocation;
-  } WGPUVertexAttribute;
-
-  typedef struct WGPUVertexBufferLayout {
-    uint64_t arrayStride;
-    uint32_t stepMode;
-    uint32_t attributeCount;
-    const WGPUVertexAttribute* attributes;
-  } WGPUVertexBufferLayout;
-
-  typedef struct WGPUPipelineLayoutDescriptor {
-    const WGPUChainedStruct* nextInChain;
-    const char* label;
-    uint32_t bindGroupLayoutCount;
-    const WGPUBindGroupLayout* bindGroupLayouts;
-  } WGPUPipelineLayoutDescriptor;
-
-  typedef struct WGPUColorTargetState {
-    WGPUTextureFormat format;
-    uint32_t blend;               // placeholder
-    WGPUColorWriteMaskFlags writeMask;
-  } WGPUColorTargetState;
-
-  typedef struct WGPUFragmentState {
-    WGPUShaderModule module;
-    const char* entryPoint;
-    uint32_t constantCount;
-    const void* constants;        // placeholder
-    uint32_t targetCount;
-    const WGPUColorTargetState* targets;
-  } WGPUFragmentState;
-
-  typedef struct WGPURenderPipelineDescriptor {
-    const WGPUChainedStruct* nextInChain;
-    const char* label;
-    WGPUPipelineLayout layout;
-    struct { WGPUShaderModule module; const char* entryPoint; uint32_t bufferCount; const WGPUVertexBufferLayout* buffers; } vertex;
-    struct { WGPUPrimitiveTopology topology; WGPUFrontFace frontFace; WGPUCullMode cullMode; uint32_t unclippedDepth; uint32_t stripIndexFormat; } primitive;
-    uint32_t depthStencil; // placeholder
-    struct { uint32_t count; uint32_t mask; uint32_t alphaToCoverageEnabled; } multisample;
-    const WGPUFragmentState* fragment;
-  } WGPURenderPipelineDescriptor;
-
-#endif // !__EMSCRIPTEN__
-
-// ────────────────────────────────────────────────────────────
-// Public interface
-// ────────────────────────────────────────────────────────────
 class WebGPUContext {
 public:
   static WebGPUContext& Get();
@@ -216,7 +86,7 @@ public:
   WGPUTextureView BeginFrame();
   void EndFrame(WGPUTextureView view);
 
-  // Exposed handles (used by renderer/engine)
+  // Exposed handles
   WGPUInstance       instance = nullptr;
   WGPUDevice         device   = nullptr;
   WGPUQueue          queue    = nullptr;
