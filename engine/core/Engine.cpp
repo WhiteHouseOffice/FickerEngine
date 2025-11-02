@@ -4,8 +4,9 @@
 #include "game/Game.h"
 #include "math/MiniMath.h"
 #include "render/WebGPUContext.h"
-
 #include <memory>
+#include "render/RenderMesh.h"   // declares render::g_data
+using render::g_data;            // make unqualified g_data refer to render::g_data
 
 // Make WebGPU types visible in this TU (resilient include)
 #if defined(FE_WEBGPU)
