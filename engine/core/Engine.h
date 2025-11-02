@@ -3,22 +3,15 @@
 
 class Engine {
 public:
-  static Engine& instance();
+    Engine();
+    ~Engine();
 
-  void init();
-  // Advance the engine by one variable frame (will internally run 0..N fixed updates)
-  void stepOnce();
-
-  // Simple readback of state for debug/UI
-  float angle() const;
-
-  ~Engine();
+    // --- Main lifecycle methods ---
+    void init();       // initialize systems and WebGPU
+    void update();     // per-frame logic
+    void render();     // per-frame rendering
+    void shutdown();   // cleanup
 
 private:
-  Engine();
-  Engine(const Engine&) = delete;
-  Engine& operator=(const Engine&) = delete;
-
-  struct Impl;
-  std::unique_ptr<Impl> impl;
+    // (future: add Scene*, Game*, etc.)
 };
