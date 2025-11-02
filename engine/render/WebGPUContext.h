@@ -1,51 +1,47 @@
 #pragma once
+#include <cstdint>
 #include <webgpu/webgpu.h>
 
 namespace render {
 
 class WebGPUContext {
 public:
+  // Singleton access (defined in .cpp)
   static WebGPUContext& Get();
 
-  // ... your existing public methods (Init, ConfigureSurface, etc.)
-
-  // NEW: accessors used by RenderMesh
-  WGPUDevice       GetDevice()       const { return device; }
-  WGPUQueue        GetQueue()        const { return queue; }
-  WGPUTextureFormat GetSurfaceFormat() const { return surfaceFormat; }
-  
-  static WebGPUContext& Get() {
-    static WebGPUContext s;
-    return s;
-  }
-
-  // Create instance/adapter/device/queue/surface
+  // Create device/queue/surface and choose surfaceFormat
   void Init();
 
-  // Configure surface (call after Init, and on resize)
-  void Configure(int width, int height);
+  // (Re)configure the surface when size changes
+  void ConfigureSurface(int width, int height);
 
-  // Per-frame acquire/present
+  // Frame lifecycle around a render pass
   WGPUTextureView BeginFrame();
-  void EndFrame(WGPUTextureView view);
+  void            EndFrame(WGPUTextureView view);
 
-  // Accessors (use these, not private fields)
-  WGPUDevice        Device()        const { return device; }
-  WGPUQueue         Queue()         const { return queue; }
-  WGPUSurface       Surface()       const { return surface; }
-  WGPUTextureFormat SurfaceFormat() const { return surfaceFormat; }
+  // Read-only accessors used by other systems (e.g., RenderMesh)
+  WGPUDevice        GetDevice()        const { return device; }
+  WGPUQueue         GetQueue()         const { return queue; }
+  WGPUTextureFormat GetSurfaceFormat() const { return surfaceFormat; }
+  int               GetWidth()         const { return width; }
+  int               GetHeight()        const { return height; }
 
 private:
+  // Only the singleton can construct/destroy
   WebGPUContext() = default;
+  ~WebGPUContext() = default;
 
+  // GPU objects
   WGPUInstance      instance      = nullptr;
   WGPUAdapter       adapter       = nullptr;
   WGPUDevice        device        = nullptr;
   WGPUQueue         queue         = nullptr;
   WGPUSurface       surface       = nullptr;
-  WGPUTextureFormat surfaceFormat = WGPUTextureFormat_BGRA8Unorm;
+  WGPUTextureFormat surfaceFormat = WGPUTextureFormat_Undefined;
 
-  bool initialized = false;
+  // Backbuffer size
+  int               width         = 0;
+  int               height        = 0;
 };
 
 } // namespace render

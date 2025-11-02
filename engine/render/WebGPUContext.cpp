@@ -3,7 +3,10 @@
 #include <cstring>
 
 namespace render {
-
+WebGPUContext& WebGPUContext::Get() {
+  static WebGPUContext s;
+  return s;
+}
 // Dawn-port callback signatures (note WGPUStringView + 2 userdatas)
 static void OnRequestAdapter(WGPURequestAdapterStatus status,
                              WGPUAdapter received,
