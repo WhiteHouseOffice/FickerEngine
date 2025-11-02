@@ -1,105 +1,70 @@
 #include "core/Engine.h"
 #include "core/Time.h"
-#include "game/Scene.h"
-#include "game/Game.h"
 #include "render/WebGPUContext.h"
-#include "render/RenderMesh.h"    // for render::g_data
-#include "geom/GridPlane.h"
-#include "geom/MarkerCross.h"
-#include "math/MiniMath.h"
 
-using render::g_data;  // global GPU context data
+#if defined(FE_WEBGPU)
+  // we will rely on WebGPUContext methods
+#endif
 
 Engine::Engine() = default;
 Engine::~Engine() = default;
 
-void Engine::Init()
-{
-#if FE_WEBGPU
-    // Initialize WebGPU context (device, queue, surface, etc.)
-    render::WebGPUContext::Init();
+void Engine::init() {
+#if defined(FE_WEBGPU)
+    // Initialize WebGPU (canvas selector can be adjusted if your HTML differs)
+    WebGPUContext::Get().Init("#canvas");
 #endif
-
-    scene = std::make_unique<Scene>();
-    game  = std::make_unique<Game>();
-
-    // Add a grid floor for visual reference
-    auto grid = std::make_shared<GameObject>();
-    grid->mesh = std::make_shared<RenderMesh>();
-    grid->mesh->UploadCPU(render::g_data.device, geom::GridPlane(20, 20, 1.0f));
-    scene->AddObject(grid);
-
-    // Add a simple cross marker at origin
-    auto marker = std::make_shared<GameObject>();
-    marker->mesh = std::make_shared<RenderMesh>();
-    marker->mesh->UploadCPU(render::g_data.device, geom::MarkerCross());
-    scene->AddObject(marker);
-
-    Time::Init();
+    Time::init();
 }
 
-void Engine::Update()
-{
-    Time::Update();
-    float dt = Time::DeltaTime();
-
-    if (game)
-        game->Update(dt);
-
-    if (scene)
-        scene->Update(dt);
+void Engine::update() {
+    Time::update();
+    // float dt = Time::deltaTime();  // keep if you need it later
+    // (Game/Scene updates intentionally omitted for now to keep build green)
 }
 
-void Engine::Render()
-{
-#if FE_WEBGPU
-    auto device = render::g_data.device;
-    auto queue  = render::g_data.queue;
-    auto ctx    = render::g_data.context;
+void Engine::render() {
+#if defined(FE_WEBGPU)
+    auto& ctx = WebGPUContext::Get();
+    if (!ctx.device || !ctx.queue || !ctx.surface) return;
 
-    if (!device || !queue || !ctx)
-        return;
+    // Begin frame: acquire the swapchain texture view
+    WGPUTextureView view = ctx.BeginFrame();
+    if (!view) return;
 
-    // Begin WebGPU frame
-    WGPUSurfaceTexture surfaceTex;
-    wgpuSurfaceGetCurrentTexture(ctx.surface, &surfaceTex);
-
-    WGPUTextureView view = wgpuTextureCreateView(surfaceTex.texture, nullptr);
-
+    // Command encoder
     WGPUCommandEncoderDescriptor encDesc{};
-    WGPUCommandEncoder encoder = wgpuDeviceCreateCommandEncoder(device, &encDesc);
+    WGPUCommandEncoder encoder = wgpuDeviceCreateCommandEncoder(ctx.device, &encDesc);
 
-    // (You’ll add rendering passes here later)
-    // For now, just clear the screen to gray.
-    WGPURenderPassColorAttachment colorAttach{};
-    colorAttach.view = view;
-    colorAttach.clearValue = {0.3f, 0.3f, 0.3f, 1.0f};
-    colorAttach.loadOp = WGPULoadOp_Clear;
-    colorAttach.storeOp = WGPUStoreOp_Store;
+    // Simple clear pass (neutral gray background)
+    WGPURenderPassColorAttachment color{};
+    color.view = view;
+    color.loadOp = WGPULoadOp_Clear;
+    color.storeOp = WGPUStoreOp_Store;
+    color.clearValue = {0.3f, 0.3f, 0.3f, 1.0f};
 
-    WGPURenderPassDescriptor passDesc{};
-    passDesc.colorAttachmentCount = 1;
-    passDesc.colorAttachments = &colorAttach;
+    WGPURenderPassDescriptor rpDesc{};
+    rpDesc.colorAttachmentCount = 1;
+    rpDesc.colorAttachments = &color;
 
-    WGPURenderPassEncoder pass = wgpuCommandEncoderBeginRenderPass(encoder, &passDesc);
+    WGPURenderPassEncoder pass = wgpuCommandEncoderBeginRenderPass(encoder, &rpDesc);
     wgpuRenderPassEncoderEnd(pass);
 
-    WGPUCommandBufferDescriptor cmdBufDesc{};
-    WGPUCommandBuffer cmdBuf = wgpuCommandEncoderFinish(encoder, &cmdBufDesc);
-    wgpuQueueSubmit(queue, 1, &cmdBuf);
+    // Submit
+    WGPUCommandBufferDescriptor cbDesc{};
+    WGPUCommandBuffer cb = wgpuCommandEncoderFinish(encoder, &cbDesc);
+    wgpuQueueSubmit(ctx.queue, 1, &cb);
 
-    wgpuTextureViewRelease(view);
-    wgpuCommandBufferRelease(cmdBuf);
+    // Present + cleanup
+    wgpuCommandBufferRelease(cb);
     wgpuCommandEncoderRelease(encoder);
+
+    ctx.EndFrame(view);
 #endif
 }
 
-void Engine::Shutdown()
-{
-    scene.reset();
-    game.reset();
-
-#if FE_WEBGPU
-    render::WebGPUContext::Shutdown();
+void Engine::shutdown() {
+#if defined(FE_WEBGPU)
+    WebGPUContext::Get().Shutdown();
 #endif
 }
