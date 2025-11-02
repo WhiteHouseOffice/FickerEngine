@@ -1,129 +1,128 @@
 #include "render/WebGPUContext.h"
-#include <cstdio>
-#include <cstring>   // for std::strlen if needed
+#include <cstring>    // std::memset
+#include <cstdio>     // std::printf
 
-using namespace render;
+namespace render {
 
-// Small helper: WGPUStringView from C-string
-static inline WGPUStringView sv(const char* s) {
-  return WGPUStringView{ s, (size_t)std::strlen(s) };
+// ---- helper callbacks for adapter/device requests --------------------------------
+
+static void OnAdapterRequested(WGPURequestAdapterStatus status,
+                               WGPUAdapter received,
+                               const char* message,
+                               void* pUserData)
+{
+  if (status == WGPURequestAdapterStatus_Success) {
+    *reinterpret_cast<WGPUAdapter*>(pUserData) = received;
+  } else {
+    std::printf("[FickerEngine] Adapter request failed: %s\n", message ? message : "(no message)");
+  }
 }
 
-WebGPUContext& WebGPUContext::Get() {
-  static WebGPUContext g;
-  return g;
+static void OnDeviceRequested(WGPURequestDeviceStatus status,
+                              WGPUDevice received,
+                              const char* message,
+                              void* pUserData)
+{
+  if (status == WGPURequestDeviceStatus_Success) {
+    *reinterpret_cast<WGPUDevice*>(pUserData) = received;
+  } else {
+    std::printf("[FickerEngine] Device request failed: %s\n", message ? message : "(no message)");
+  }
 }
+
+// ----------------------------------------------------------------------------------
 
 void WebGPUContext::Init()
 {
   if (initialized) return;
 
+  // Instance (no special options needed)
   instance = wgpuCreateInstance(nullptr);
+  if (!instance) {
+    std::printf("[FickerEngine] wgpuCreateInstance failed.\n");
+    return;
+  }
 
-  // Create a surface bound to the HTML canvas with id="canvas"
-  // emdawnwebgpu uses the CanvasId chain struct + StringView
+  // Request adapter
+  wgpuInstanceRequestAdapter(instance, /*options*/ nullptr,
+                             OnAdapterRequested, &adapter);
+  if (!adapter) {
+    std::printf("[FickerEngine] No adapter available.\n");
+    return;
+  }
+
+  // Request device
+  wgpuAdapterRequestDevice(adapter, /*desc*/ nullptr,
+                           OnDeviceRequested, &device);
+  if (!device) {
+    std::printf("[FickerEngine] No device available.\n");
+    return;
+  }
+
+  queue = wgpuDeviceGetQueue(device);
+
+  // Create a surface. On Emscripten/Dawn, creating the surface with an empty
+  // descriptor is supported and binds to the default <canvas id="canvas">.
+  // (We avoid HTML selector/canvas-id chained structs that are not present in
+  // emdawnwebgpu's C headers.)
   WGPUSurfaceDescriptor sd{};
-  WGPUSurfaceDescriptorFromCanvasHTMLCanvasId canvasDesc{};
-  canvasDesc.chain.sType = WGPUSType_SurfaceDescriptorFromCanvasHTMLCanvasId;
-  canvasDesc.canvas = sv("canvas");
-
-  // Note: in emdawnwebgpu headers, nextInChain may be NON-const
-  sd.nextInChain = (WGPUChainedStruct*)&canvasDesc;
-
+  sd.nextInChain = nullptr;
   surface = wgpuInstanceCreateSurface(instance, &sd);
 
-  // Device/queue
-  // (For now use the default device getter; if you moved to requestAdapter/device,
-  //  keep that path instead.)
-  device = emscripten_webgpu_get_device();
-  queue  = wgpuDeviceGetQueue(device);
+  if (!surface) {
+    std::printf("[FickerEngine] Failed to create surface.\n");
+    return;
+  }
 
-  // Choose a surface format. Preferred-format helper differs across headers,
-  // so just pick the common BGRA8Unorm which is the usual swapchain format on web.
-  surfaceFormat = WGPUTextureFormat_BGRA8Unorm;
-
-  // Configure once with a default size; Engine will call ConfigureSurface with real size.
-  WGPUSurfaceConfiguration cfg{};
-  cfg.device        = device;
-  cfg.format        = surfaceFormat;
-  cfg.usage         = WGPUTextureUsage_RenderAttachment;
-  cfg.alphaMode     = WGPUCompositeAlphaMode_Auto;
-  cfg.viewFormats   = nullptr;
-  cfg.viewFormatCount = 0;
-  cfg.width  = 800;
-  cfg.height = 600;
-  wgpuSurfaceConfigure(surface, &cfg);
-
-  // Minimal pipeline state will be created lazily when first draw happens.
   initialized = true;
+  std::printf("[FickerEngine] WebGPU init OK (Dawn port).\n");
 }
 
-void WebGPUContext::ConfigureSurface(int width, int height)
+void WebGPUContext::Configure(int width, int height)
 {
-  if (!surface || !device) return;
+  if (!initialized || !device || !surface) return;
 
+  // Minimal surface configuration (no alpha mode/present mode fiddling)
   WGPUSurfaceConfiguration cfg{};
-  cfg.device        = device;
-  cfg.format        = surfaceFormat;
-  cfg.usage         = WGPUTextureUsage_RenderAttachment;
-  cfg.alphaMode     = WGPUCompositeAlphaMode_Auto;
-  cfg.viewFormats   = nullptr;
-  cfg.viewFormatCount = 0;
-  cfg.width  = (uint32_t)width;
-  cfg.height = (uint32_t)height;
+  cfg.device      = device;
+  cfg.format      = surfaceFormat; // BGRA8Unorm default works in browsers
+  cfg.usage       = WGPUTextureUsage_RenderAttachment;
+  cfg.width       = static_cast<uint32_t>(width > 0 ? width : 1);
+  cfg.height      = static_cast<uint32_t>(height > 0 ? height : 1);
+  cfg.presentMode = WGPUPresentMode_Fifo;
 
   wgpuSurfaceConfigure(surface, &cfg);
 }
 
 WGPUTextureView WebGPUContext::BeginFrame()
 {
-  // Get the current drawable
+  if (!initialized || !surface) return nullptr;
+
+  // Acquire the current surface texture (do NOT rely on status enum names)
   WGPUSurfaceTexture st{};
   wgpuSurfaceGetCurrentTexture(surface, &st);
 
-  if (!st.texture || st.status != WGPUSurfaceGetCurrentTextureStatus_Success) {
-    // Try once more (some browsers transiently report non-ready)
-    wgpuSurfaceGetCurrentTexture(surface, &st);
-    if (!st.texture || st.status != WGPUSurfaceGetCurrentTextureStatus_Success) {
-      return nullptr;
-    }
+  if (!st.texture) {
+    // If acquisition failed (tab hidden / resize race), skip this frame
+    return nullptr;
   }
 
-  WGPUTextureViewDescriptor tvd{};
-  tvd.aspect = WGPUTextureAspect_All;
-  return wgpuTextureCreateView(st.texture, &tvd);
+  WGPUTextureViewDescriptor vd{};
+  WGPUTextureView view = wgpuTextureCreateView(st.texture, &vd);
+
+  // We keep st.texture alive until present; Dawn presents/releases internally on Present()
+  return view;
 }
 
 void WebGPUContext::EndFrame(WGPUTextureView view)
 {
+  if (!initialized || !surface) return;
+
+  // Present and drop the view
+  wgpuSurfacePresent(surface);
   if (view) {
-    WGPUTexture tex = wgpuTextureViewGetTexture(view);
     wgpuTextureViewRelease(view);
-
-    // Present & release
-    wgpuSurfacePresent(surface);
-
-    if (tex) {
-      wgpuTextureRelease(tex);
-    }
   }
 }
 
-void WebGPUContext::Shutdown()
-{
-  if (!initialized) return;
-
-  if (pipeline)        { wgpuRenderPipelineRelease(pipeline); pipeline = nullptr; }
-  if (shader)          { wgpuShaderModuleRelease(shader);     shader   = nullptr; }
-  if (pipelineLayout)  { wgpuPipelineLayoutRelease(pipelineLayout); pipelineLayout = nullptr; }
-  if (bindGroup)       { wgpuBindGroupRelease(bindGroup);     bindGroup = nullptr; }
-  if (bindGroupLayout) { wgpuBindGroupLayoutRelease(bindGroupLayout); bindGroupLayout = nullptr; }
-  if (mvpBuffer)       { wgpuBufferRelease(mvpBuffer);         mvpBuffer = nullptr; }
-
-  if (surface) { wgpuSurfaceRelease(surface); surface = nullptr; }
-  if (queue)   { wgpuQueueRelease(queue);     queue   = nullptr; }
-  if (device)  { wgpuDeviceRelease(device);   device  = nullptr; }
-  if (instance){ wgpuInstanceRelease(instance); instance = nullptr; }
-
-  initialized = false;
-}
+} // namespace render

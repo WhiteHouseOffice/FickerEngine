@@ -1,44 +1,47 @@
 #pragma once
 
-// We are on Emscripten with the Dawn WebGPU port.
-// Use the Dawn header location:
+// Dawn WebGPU C header provided by the emdawnwebgpu port
 #include <webgpu/webgpu.h>
 
 namespace render {
 
+// Minimal singleton context used by Engine
 class WebGPUContext {
 public:
-  static WebGPUContext& Get();
+  static WebGPUContext& Get() {
+    static WebGPUContext s;
+    return s;
+  }
 
+  // Initialize instance, adapter, device, surface, queue
   void Init();
-  void ConfigureSurface(int width, int height);
-  void Shutdown();
 
-  // Per-frame acquire/present
+  // (Re)configure the surface (call once after Init, or when canvas size changes)
+  void Configure(int width, int height);
+
+  // Acquire a frame's view. Returns nullptr if no texture is available.
   WGPUTextureView BeginFrame();
+
+  // Present and clean up (releases the view)
   void EndFrame(WGPUTextureView view);
 
-  // Public state used by renderer
-  WGPUInstance      instance = nullptr;
-  WGPUDevice        device   = nullptr;
-  WGPUQueue         queue    = nullptr;
-  WGPUSurface       surface  = nullptr;
-  WGPUTextureFormat surfaceFormat = WGPUTextureFormat_BGRA8Unorm;
-
-  // Minimal pipeline bits (optional; created lazily elsewhere)
-  WGPUBuffer            mvpBuffer       = nullptr;
-  WGPUBindGroupLayout   bindGroupLayout = nullptr;
-  WGPUBindGroup         bindGroup       = nullptr;
-  WGPUPipelineLayout    pipelineLayout  = nullptr;
-  WGPUShaderModule      shader          = nullptr;
-  WGPURenderPipeline    pipeline        = nullptr;
-
-  bool initialized = false;
+  // Quick getters
+  WGPUDevice Device() const { return device; }
+  WGPUQueue  Queue()  const { return queue; }
+  WGPUTextureFormat SurfaceFormat() const { return surfaceFormat; }
 
 private:
   WebGPUContext() = default;
-  WebGPUContext(const WebGPUContext&) = delete;
-  WebGPUContext& operator=(const WebGPUContext&) = delete;
+
+  // WebGPU handles
+  WGPUInstance      instance       = nullptr;
+  WGPUAdapter       adapter        = nullptr;
+  WGPUDevice        device         = nullptr;
+  WGPUQueue         queue          = nullptr;
+  WGPUSurface       surface        = nullptr;
+  WGPUTextureFormat surfaceFormat  = WGPUTextureFormat_BGRA8Unorm; // safe default
+
+  bool initialized = false;
 };
 
 } // namespace render
