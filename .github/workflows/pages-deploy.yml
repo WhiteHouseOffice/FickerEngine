@@ -22,10 +22,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Emscripten
+      - name: Setup Emscripten (4.0.10)
         uses: mymindstorm/setup-emsdk@v14
         with:
-          version: 3.1.62
+          version: 4.0.10
+          actions-cache-folder: emsdk-cache
 
       - name: Configure Pages
         uses: actions/configure-pages@v5
