@@ -1,8 +1,8 @@
-name: Deploy Web Preview to GitHub Pages
+name: Deploy Web (Emscripten → GitHub Pages)
 
 on:
   push:
-    branches: [main]
+    branches: [ "main" ]
   workflow_dispatch:
 
 permissions:
@@ -18,49 +18,41 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Ninja
-        run: sudo apt-get update && sudo apt-get install -y ninja-build
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Setup Emscripten
         uses: mymindstorm/setup-emsdk@v14
         with:
-          version: 3.1.57
+          version: latest
           actions-cache-folder: emsdk-cache
 
-      - name: Configure (web)
-        run: emcmake cmake -S . -B webbuild -D BUILD_WEB=ON -G Ninja
+      - name: Configure (emcmake)
+        run: emcmake cmake -S . -B webbuild -G Ninja
 
       - name: Build
-        run: cmake --build webbuild
+        run: cmake --build webbuild -j
 
-      - name: Stage site
+      - name: Prepare site
         run: |
-          mkdir -p webbuild/site
-          cp -r web/* webbuild/site/ || true
-          # Copy compiled outputs (engine.js / engine.wasm, etc.)
-          find webbuild -maxdepth 2 -type f -name "engine.*" -exec cp {} webbuild/site/ \; || true
-          # Ensure GitHub Pages doesn't run Jekyll and skip our files
-          touch webbuild/site/.nojekyll
+          mkdir -p dist
+          # Rename the generated HTML to index.html so Pages serves it by default
+          cp webbuild/FickerEngine.html dist/index.html
+          cp webbuild/FickerEngine.js dist/
+          cp webbuild/FickerEngine.wasm dist/
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: webbuild/site
+          path: dist
 
   deploy:
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
-    needs: build
     runs-on: ubuntu-latest
+    needs: build
     steps:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
-
-      - name: Show preview URL
-        run: |
-          echo "### 🚀 Live Preview" >> $GITHUB_STEP_SUMMARY
-          echo "Open --> ${{ steps.deployment.outputs.page_url }}" >> $GITHUB_STEP_SUMMARY
