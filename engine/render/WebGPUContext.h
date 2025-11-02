@@ -5,6 +5,15 @@ namespace render {
 
 class WebGPUContext {
 public:
+  static WebGPUContext& Get();
+
+  // ... your existing public methods (Init, ConfigureSurface, etc.)
+
+  // NEW: accessors used by RenderMesh
+  WGPUDevice       GetDevice()       const { return device; }
+  WGPUQueue        GetQueue()        const { return queue; }
+  WGPUTextureFormat GetSurfaceFormat() const { return surfaceFormat; }
+  
   static WebGPUContext& Get() {
     static WebGPUContext s;
     return s;
