@@ -42,7 +42,12 @@ EM_ASYNC_JS(int, fe_webgpu_init_async, (), {
     const adapter = await navigator.gpu.requestAdapter();
     if (!adapter) return 0;
     const device  = await adapter.requestDevice();
-    Module.wgpuDevice = device;  // Emscripten expects this
+
+    // Set BOTH globals so all emscripten variants see it
+    if (typeof Module !== 'undefined') Module['wgpuDevice'] = device;
+    globalThis.wgpuDevice = device;
+
+    console.log("[FickerEngine] WebGPU device ready:", device !== undefined);
     return 1;
   } catch (e) {
     console.error("[FickerEngine] WebGPU init failed:", e);
