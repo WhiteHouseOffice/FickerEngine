@@ -1,17 +1,25 @@
 #pragma once
-#include <memory>
+
+// Minimal core engine singleton interface used by runtime/main.cpp
 
 class Engine {
 public:
-    Engine();
-    ~Engine();
+  // Singleton access (runtime/main.cpp calls Engine::instance())
+  static Engine& instance();
 
-    // --- Main lifecycle methods ---
-    void init();       // initialize systems and WebGPU
-    void update();     // per-frame logic
-    void render();     // per-frame rendering
-    void shutdown();   // cleanup
+  // Lifecycle
+  void init();
+  void update();
+  void render();
+  void shutdown();
+
+  // One tick used by the browser loop
+  void stepOnce();
 
 private:
-    // (future: add Scene*, Game*, etc.)
+  Engine()  = default;
+  ~Engine() = default;
+
+  Engine(const Engine&)            = delete;
+  Engine& operator=(const Engine&) = delete;
 };
