@@ -1,32 +1,27 @@
 #pragma once
-
-#if __has_include(<webgpu/webgpu.h>)
-  #include <webgpu/webgpu.h>
-#elif __has_include(<emscripten/webgpu.h>)
-  #include <emscripten/webgpu.h>
-#else
-  #error "WebGPU headers not found"
-#endif
-
 #include <cstdint>
 #include <vector>
+#include <webgpu/webgpu.h>
+
+namespace render {
 
 struct MeshCPU {
-  std::vector<float>    positions;  // xyz per vertex
-  std::vector<uint32_t> indices;    // triangles
+  std::vector<float>    positions;   // xyz…
+  std::vector<uint32_t> indices;     // line/triangle indices
 };
 
+// Minimal GPU mesh wrapper for WebGPU
 class RenderMesh {
 public:
-  RenderMesh() = default;
-  ~RenderMesh();
+  void UploadCPU(const MeshCPU& d);
+  void Draw(WGPURenderPassEncoder pass) const;
 
-  void UploadCPU(WGPUDevice device, const MeshCPU& d);
-  void Draw(WGPUDevice device, WGPUQueue queue, WGPUTextureView backbuffer);
-
-  uint32_t indexCount = 0;
-
-private:
   WGPUBuffer vbo = nullptr;
   WGPUBuffer ibo = nullptr;
+
+  uint32_t           indexCount  = 0;
+  WGPUIndexFormat    indexFormat = WGPUIndexFormat_Uint32;
+  WGPUPrimitiveTopology topology = WGPUPrimitiveTopology_LineList;
 };
+
+} // namespace render

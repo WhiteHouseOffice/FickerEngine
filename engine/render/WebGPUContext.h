@@ -1,49 +1,44 @@
 #pragma once
-#include <cstdint>
 
-// Dawn (emdawnwebgpu) header first
-#if __has_include(<webgpu/webgpu.h>)
-  #include <webgpu/webgpu.h>
-#elif __has_include(<emscripten/webgpu.h>)
-  // very old SDKs
-  #include <emscripten/webgpu.h>
-#else
-  #error "WebGPU headers not found (tried <webgpu/webgpu.h> and <emscripten/webgpu.h>)"
-#endif
+// We are on Emscripten with the Dawn WebGPU port.
+// Use the Dawn header location:
+#include <webgpu/webgpu.h>
+
+namespace render {
 
 class WebGPUContext {
 public:
-  static WebGPUContext& Get() { static WebGPUContext s; return s; }
+  static WebGPUContext& Get();
 
-  void Init(const char* canvasSelector = "#canvas");
-  void EnsureConfigured();
+  void Init();
+  void ConfigureSurface(int width, int height);
+  void Shutdown();
 
-  // Begin/End present frame. If surface is not available, returns nullptr and render should no-op.
+  // Per-frame acquire/present
   WGPUTextureView BeginFrame();
   void EndFrame(WGPUTextureView view);
 
-  // Public bits used by renderer
-  WGPUInstance       instance = nullptr;
-  WGPUDevice         device   = nullptr;
-  WGPUQueue          queue    = nullptr;
-  WGPUSurface        surface  = nullptr;
-  WGPUTextureFormat  format   = WGPUTextureFormat_BGRA8Unorm; // default for canvas
+  // Public state used by renderer
+  WGPUInstance      instance = nullptr;
+  WGPUDevice        device   = nullptr;
+  WGPUQueue         queue    = nullptr;
+  WGPUSurface       surface  = nullptr;
+  WGPUTextureFormat surfaceFormat = WGPUTextureFormat_BGRA8Unorm;
 
-  // Current swap texture (if any)
-  WGPUTexture        currentTexture = nullptr;
+  // Minimal pipeline bits (optional; created lazily elsewhere)
+  WGPUBuffer            mvpBuffer       = nullptr;
+  WGPUBindGroupLayout   bindGroupLayout = nullptr;
+  WGPUBindGroup         bindGroup       = nullptr;
+  WGPUPipelineLayout    pipelineLayout  = nullptr;
+  WGPUShaderModule      shader          = nullptr;
+  WGPURenderPipeline    pipeline        = nullptr;
 
-  // Canvas metrics (in device pixels)
-  int width  = 0;
-  int height = 0;
+  bool initialized = false;
 
 private:
   WebGPUContext() = default;
-
-  void CreateSurfaceFromCanvas(const char* selector);
-  void ConfigureSurface(int w, int h);
-  int  CanvasPixelWidth() const;
-  int  CanvasPixelHeight() const;
-
-  const char* selector = "#canvas";
-  bool configured = false;
+  WebGPUContext(const WebGPUContext&) = delete;
+  WebGPUContext& operator=(const WebGPUContext&) = delete;
 };
+
+} // namespace render
