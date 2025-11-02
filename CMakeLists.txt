@@ -44,10 +44,11 @@ if (EMSCRIPTEN OR BUILD_WEB)
         "-sUSE_WEBGPU=1"
     )
     target_link_options(FickerEngine PRIVATE
-        "-sUSE_WEBGPU=1"
-        "-sALLOW_MEMORY_GROWTH=1"
-        "-sASSERTIONS=1"
-    )
+    "-sUSE_WEBGPU=1"
+    "-sALLOW_MEMORY_GROWTH=1"
+    "-sASSERTIONS=1"
+    "-sASYNCIFY"
+)
 
 # --- Native (placeholder; no GL yet) ---
 else()

@@ -19,15 +19,19 @@ extern "C" WGPUDevice emscripten_webgpu_get_device(void);
 
 // JS-side feature detection (guarded so native builds still compile)
 #if FE_HAS_EM
-EM_JS(int, fe_webgpu_supported, (), {
-  return (typeof navigator !== 'undefined' && navigator.gpu) ? 1 : 0;
+EM_ASYNC_JS(int, fe_webgpu_init_async, (), {
+  if (!navigator.gpu) return 0;
+  try {
+    const adapter = await navigator.gpu.requestAdapter();
+    if (!adapter) return 0;
+    const device  = await adapter.requestDevice();
+    Module.wgpuDevice = device; // Emscripten uses this internally
+    return 1;
+  } catch (e) {
+    console.error("[FickerEngine] WebGPU init failed:", e);
+    return 0;
+  }
 });
-EM_JS(void, fe_webgpu_log_unsupported, (), {
-  console.error("[FickerEngine] WebGPU not available. Use Chrome/Edge 113+ or Safari 17+. On Firefox: about:config → dom.webgpu.enabled = true.");
-});
-#else
-static inline int  fe_webgpu_supported() { return 0; }
-static inline void fe_webgpu_log_unsupported() {}
 #endif
 
 // -------- Minimal WGSL (positions only + MVP; fixed color) -------------------
@@ -91,16 +95,14 @@ void WebGPUContext::EndFrame(WGPUTextureView /*view*/) {
 
 // -------- Internals ----------------------------------------------------------
 void WebGPUContext::createDevice_() {
-    if (!fe_webgpu_supported()) {
-        device = nullptr;
-        fe_webgpu_log_unsupported();
-        return;
-    }
-    device = emscripten_webgpu_get_device(); // safe now; won’t assert
-    if (!device) {
-        fe_webgpu_log_unsupported();
-        return;
-    }
+#if FE_HAS_EM
+    if (!fe_webgpu_supported()) { device = nullptr; fe_webgpu_log_unsupported(); return; }
+    // Ensure JS side created the device (await)
+    if (!fe_webgpu_init_async()) { device = nullptr; fe_webgpu_log_unsupported(); return; }
+#endif
+    // Safe to call now
+    device = emscripten_webgpu_get_device();
+    if (!device) { fe_webgpu_log_unsupported(); return; }
     queue  = wgpuDeviceGetQueue(device);
 }
 
