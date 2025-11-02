@@ -1,22 +1,27 @@
+// runtime/main.cpp
 #include "core/Engine.h"
 
-#ifdef FE_WEB
+#ifdef __EMSCRIPTEN__
   #include <emscripten/emscripten.h>
-  static void tick(void*) { Engine::instance().stepOnce(); }
-  int main() {
-    Engine::instance().init();
-    emscripten_set_main_loop_arg(tick, nullptr, 30, 1);
-    return 0;
-  }
-#else
-  #include <thread>
-  #include <chrono>
-  int main() {
-    Engine::instance().init();
-    for (;;) {
-      Engine::instance().stepOnce();
-      std::this_thread::sleep_for(std::chrono::milliseconds(33));
-    }
-    return 0;
-  }
 #endif
+
+static Engine g_engine;
+
+static void tick(void*) {
+    g_engine.update();
+    g_engine.render();
+}
+
+int main(int /*argc*/, char** /*argv*/) {
+    g_engine.init();
+
+#ifdef __EMSCRIPTEN__
+    // 0 = browser-driven FPS, 1 = simulate infinite loop
+    emscripten_set_main_loop_arg(tick, nullptr, 0, 1);
+#else
+    // Simple native fallback loop (not used in web-only flow)
+    for (;;) { tick(nullptr); }
+#endif
+
+    return 0;
+}
