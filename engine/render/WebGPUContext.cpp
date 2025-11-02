@@ -1,11 +1,9 @@
 #if defined(FE_WEBGPU)
 
 #include "WebGPUContext.h"
-#include <emscripten/html5_webgpu.h> // emscripten_webgpu_get_device
-#include <webgpu/webgpu_cpp.h>
-#include <cstring>
+#include <string.h>
 
-// Tiny WGSL shader (positions only + MVP; solid per-draw color via push constants later if needed)
+// Minimal WGSL: positions only + MVP; fixed color
 static const char* kWGSL = R"(
 struct MVP { mvp : mat4x4<f32> };
 @group(0) @binding(0) var<uniform> uMVP : MVP;
@@ -22,7 +20,6 @@ fn vs_main(input : VSIn) -> VSOut {
 
 @fragment
 fn fs_main() -> @location(0) vec4<f32> {
-  // Light grey by default; caller can swap pipeline later if we add colors
   return vec4<f32>(0.85, 0.85, 0.9, 1.0);
 }
 )";
@@ -34,30 +31,33 @@ WebGPUContext& WebGPUContext::Get() {
 
 void WebGPUContext::Init(const char* canvasSelector) {
     if (initialized) return;
-    instance = wgpu::CreateInstance({});
+
+    instance = wgpuCreateInstance(nullptr);
     createDevice_();
     createSurface_(canvasSelector);
     configureSurface_();
     createMVPResources_();
     createPipeline_();
+
     initialized = true;
 }
 
 void WebGPUContext::createDevice_() {
-    // Emscripten gives us a pre-initialized WebGPU device
+    // Emscripten provides a default device
     WGPUDevice dev = emscripten_webgpu_get_device();
-    device = wgpu::Device::Acquire(dev);
-    queue  = device.GetQueue();
+    device = dev;
+    queue  = wgpuDeviceGetQueue(device);
 }
 
 void WebGPUContext::createSurface_(const char* canvasSelector) {
-    // Create surface from the default canvas (Emscripten default shell has #canvas)
-    wgpu::SurfaceDescriptorFromCanvasHTMLSelector canvasDesc{};
+    WGPUSurfaceDescriptorFromCanvasHTMLSelector canvasDesc = {};
+    canvasDesc.chain.sType = WGPUSType_SurfaceDescriptorFromCanvasHTMLSelector;
     canvasDesc.selector = canvasSelector;
 
-    wgpu::SurfaceDescriptor sd{};
-    sd.nextInChain = &canvasDesc;
-    surface = instance.CreateSurface(&sd);
+    WGPUSurfaceDescriptor surfDesc = {};
+    surfDesc.nextInChain = reinterpret_cast<WGPUChainedStruct*>(&canvasDesc);
+
+    surface = wgpuInstanceCreateSurface(instance, &surfDesc);
 }
 
 void WebGPUContext::ConfigureSurface(uint32_t w, uint32_t h) {
@@ -66,118 +66,121 @@ void WebGPUContext::ConfigureSurface(uint32_t w, uint32_t h) {
 }
 
 void WebGPUContext::configureSurface_() {
-    // Pick preferred format
-    surfaceFormat = (wgpu::TextureFormat)surface.GetPreferredFormat(/*adapter*/nullptr);
-    wgpu::SurfaceConfiguration sc{};
-    sc.usage = wgpu::TextureUsage::RenderAttachment;
-    sc.format = surfaceFormat;
-    sc.width  = width;
-    sc.height = height;
-    sc.presentMode = wgpu::PresentMode::Fifo;
-    surface.Configure(&sc);
+    // BGRA8Unorm is widely supported in browsers
+    surfaceFormat = WGPUTextureFormat_BGRA8Unorm;
+
+    WGPUSurfaceConfiguration sc = {};
+    sc.device      = device;
+    sc.format      = surfaceFormat;
+    sc.usage       = WGPUTextureUsage_RenderAttachment;
+    sc.width       = width;
+    sc.height      = height;
+    sc.presentMode = WGPUPresentMode_Fifo;
+
+    wgpuSurfaceConfigure(surface, &sc);
 }
 
 void WebGPUContext::createMVPResources_() {
-    // 16 floats
-    wgpu::BufferDescriptor bd{};
+    // 16 floats for mat4
+    WGPUBufferDescriptor bd = {};
+    bd.usage = WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst;
     bd.size  = sizeof(float) * 16;
-    bd.usage = wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst;
-    mvpBuffer = device.CreateBuffer(&bd);
+    mvpBuffer = wgpuDeviceCreateBuffer(device, &bd);
 
-    // Bind group layout
-    wgpu::BindGroupLayoutEntry e{};
-    e.binding    = 0;
-    e.visibility = wgpu::ShaderStage::Vertex;
-    e.buffer.type = wgpu::BufferBindingType::Uniform;
+    // BindGroupLayout
+    WGPUBindGroupLayoutEntry entry = {};
+    entry.binding    = 0;
+    entry.visibility = WGPUShaderStage_Vertex;
+    entry.buffer.type = WGPUBufferBindingType_Uniform;
 
-    wgpu::BindGroupLayoutDescriptor bld{};
+    WGPUBindGroupLayoutDescriptor bld = {};
     bld.entryCount = 1;
-    bld.entries    = &e;
-    bindGroupLayout = device.CreateBindGroupLayout(&bld);
+    bld.entries    = &entry;
+    bindGroupLayout = wgpuDeviceCreateBindGroupLayout(device, &bld);
 
-    // Bind group
-    wgpu::BindGroupEntry be{};
+    // BindGroup
+    WGPUBindGroupEntry be = {};
     be.binding = 0;
     be.buffer  = mvpBuffer;
     be.offset  = 0;
     be.size    = sizeof(float) * 16;
 
-    wgpu::BindGroupDescriptor bgd{};
+    WGPUBindGroupDescriptor bgd = {};
     bgd.layout     = bindGroupLayout;
     bgd.entryCount = 1;
     bgd.entries    = &be;
-    bindGroup = device.CreateBindGroup(&bgd);
+    bindGroup = wgpuDeviceCreateBindGroup(device, &bgd);
 }
 
 void WebGPUContext::createPipeline_() {
-    // Shader
-    wgpu::ShaderModuleWGSLDescriptor wgsl{};
+    // WGSL shader
+    WGPUShaderModuleWGSLDescriptor wgsl = {};
+    wgsl.chain.sType = WGPUSType_ShaderModuleWGSLDescriptor;
     wgsl.code = kWGSL;
 
-    wgpu::ShaderModuleDescriptor smd{};
-    smd.nextInChain = &wgsl;
-    shader = device.CreateShaderModule(&smd);
+    WGPUShaderModuleDescriptor smd = {};
+    smd.nextInChain = reinterpret_cast<WGPUChainedStruct*>(&wgsl);
+    shader = wgpuDeviceCreateShaderModule(device, &smd);
 
     // Vertex layout: vec3<f32> at location 0
-    wgpu::VertexAttribute attr{};
+    WGPUVertexAttribute attr = {};
     attr.shaderLocation = 0;
     attr.offset = 0;
-    attr.format = wgpu::VertexFormat::Float32x3;
+    attr.format = WGPUVertexFormat_Float32x3;
 
-    wgpu::VertexBufferLayout vbl{};
-    vbl.arrayStride = sizeof(float)*3;
+    WGPUVertexBufferLayout vbl = {};
+    vbl.arrayStride    = sizeof(float) * 3;
     vbl.attributeCount = 1;
-    vbl.attributes = &attr;
+    vbl.attributes     = &attr;
 
     // Pipeline layout
-    wgpu::PipelineLayoutDescriptor pld{};
+    WGPUPipelineLayoutDescriptor pld = {};
     pld.bindGroupLayoutCount = 1;
-    pld.bindGroupLayouts = &bindGroupLayout;
-    pipelineLayout = device.CreatePipelineLayout(&pld);
+    pld.bindGroupLayouts     = &bindGroupLayout;
+    pipelineLayout = wgpuDeviceCreatePipelineLayout(device, &pld);
+
+    // Fragment state
+    WGPUColorTargetState color = {};
+    color.format    = surfaceFormat;
+    color.writeMask = WGPUColorWriteMask_All;
+
+    WGPUFragmentState fs = {};
+    fs.module     = shader;
+    fs.entryPoint = "fs_main";
+    fs.targetCount= 1;
+    fs.targets    = &color;
 
     // Render pipeline
-    wgpu::RenderPipelineDescriptor rp{};
+    WGPURenderPipelineDescriptor rp = {};
     rp.layout = pipelineLayout;
-
     rp.vertex.module = shader;
     rp.vertex.entryPoint = "vs_main";
     rp.vertex.bufferCount = 1;
     rp.vertex.buffers = &vbl;
 
-    wgpu::FragmentState fs{};
-    fs.module = shader;
-    fs.entryPoint = "fs_main";
-
-    wgpu::ColorTargetState color{};
-    color.format = surfaceFormat;
-    color.writeMask = wgpu::ColorWriteMask::All;
-
-    fs.targetCount = 1;
-    fs.targets = &color;
     rp.fragment = &fs;
 
-    rp.primitive.topology = wgpu::PrimitiveTopology::LineList; // our grid/marker are lines
-    rp.primitive.stripIndexFormat = wgpu::IndexFormat::Undefined;
-    rp.primitive.frontFace = wgpu::FrontFace::CCW;
-    rp.primitive.cullMode = wgpu::CullMode::None;
+    rp.primitive.topology = WGPUPrimitiveTopology_LineList;
+    rp.primitive.stripIndexFormat = WGPUIndexFormat_Undefined;
+    rp.primitive.frontFace = WGPUFrontFace_CCW;
+    rp.primitive.cullMode  = WGPUCullMode_None;
 
     rp.multisample.count = 1;
 
-    pipeline = device.CreateRenderPipeline(&rp);
+    pipeline = wgpuDeviceCreateRenderPipeline(device, &rp);
 }
 
-wgpu::TextureView WebGPUContext::BeginFrame() {
-    wgpu::SurfaceTexture st = surface.GetCurrentTexture();
-    if (!st.texture) {
-        return nullptr;
-    }
-    wgpu::TextureViewDescriptor vd{};
-    auto view = st.texture.CreateView(&vd);
-    return view;
+WGPUTextureView WebGPUContext::BeginFrame() {
+    WGPUSurfaceTexture st = {};
+    wgpuSurfaceGetCurrentTexture(surface, &st);
+    if (!st.texture) return nullptr;
+
+    WGPUTextureViewDescriptor vd = {};
+    return wgpuTextureCreateView(st.texture, &vd);
 }
 
-void WebGPUContext::EndFrame(const wgpu::TextureView& /*view*/) {
-    surface.Present();
+void WebGPUContext::EndFrame(WGPUTextureView /*view*/) {
+    wgpuSurfacePresent(surface);
 }
 
 #endif // FE_WEBGPU

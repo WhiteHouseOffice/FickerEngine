@@ -38,6 +38,6 @@ if (EMSCRIPTEN OR BUILD_WEB)
     target_link_options(FickerEngine PRIVATE
         "-sUSE_WEBGPU=1"
         "-sALLOW_MEMORY_GROWTH=1"
-        "-sASSERTIONS=1"     # helpful while we wire WebGPU
+        "-sASSERTIONS=1"
     )
 endif()
