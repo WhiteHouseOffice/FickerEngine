@@ -2,7 +2,6 @@
 #include <cstdint>
 #include <vector>
 
-// Same include strategy here
 #if defined(__EMSCRIPTEN__)
   #if __has_include(<emscripten/webgpu.h>)
     #include <emscripten/webgpu.h>

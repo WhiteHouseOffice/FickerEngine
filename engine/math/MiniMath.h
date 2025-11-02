@@ -46,6 +46,9 @@ inline Mat4 mul(const Mat4& A, const Mat4& B){
     return R;
 }
 
+// Some files use matMul(); keep both names valid.
+inline Mat4 matMul(const Mat4& A, const Mat4& B) { return mul(A, B); }
+
 inline Mat4 lookAt(const Vec3& eye, const Vec3& center, const Vec3& up){
     Vec3 f = normalize(Vec3{center.x-eye.x, center.y-eye.y, center.z-eye.z});
     Vec3 s = normalize(cross(f, up));
