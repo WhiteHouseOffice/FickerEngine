@@ -24,7 +24,6 @@ jobs:
       - name: Setup Emscripten
         uses: mymindstorm/setup-emsdk@v14
         with:
-          # Pin a modern version known to ship WebGPU headers
           version: 3.1.62
           actions-cache-folder: emsdk-cache
 
@@ -64,5 +63,12 @@ jobs:
         id: deployment
         uses: actions/deploy-pages@v4
 
-      - name: Show Live URL in summary
-        run: echo "### ✅ Live preview: ${{ steps.deployment.outputs.page_url }}" >> $GITHUB_STEP_SUMMARY
+      - name: Post live URL to summary
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const url = '${{ steps.deployment.outputs.page_url }}';
+            core.summary
+              .addHeading('✅ Live preview')
+              .addLink(url, url)
+              .write();
