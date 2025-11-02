@@ -1,39 +1,26 @@
+#include "engine/core/Engine.h"
 
-#include "core/Engine.h"
-#include "render/IRenderer.h"
-#include <memory>
-#include <cstdio>
-
-#ifdef FE_WEB
-extern std::unique_ptr<IRenderer> CreateWebRenderer();
-#include <emscripten.h>
-#include <emscripten/bind.h>
-
-static Engine* g_engine = nullptr;
-
-static void stepOnce() {
-  if(g_engine) g_engine->runOnce(1.0/60.0);
+#if defined(FE_WEB)
+#include <emscripten/emscripten.h>
+extern "C" {
+  // Called by JS (see index.html), after WASM runtime is ready
+  EMSCRIPTEN_KEEPALIVE
+  void fe_init() { Engine::instance().init(); }
 }
-
-EMSCRIPTEN_BINDINGS(fe_bindings) {
-  emscripten::function("stepOnce", &stepOnce);
-}
-
 int main() {
-  EngineConfig cfg; cfg.width=800; cfg.height=600;
-  auto r = CreateWebRenderer();
-  if(!r->init(cfg.width, cfg.height)) {
-    printf("Web init failed\\n");
-    return 1;
-  }
-  static Engine eng(cfg, std::move(r));
-  g_engine = &eng;
+  // No main loop here; JS calls fe_init() then stepOnce() per frame/capture.
   return 0;
 }
-
 #else
+// Native stub for completeness
 int main() {
-  printf("Native build not implemented in this bootstrap.\\n");
+  auto& eng = Engine::instance();
+  eng.init();
+  // Minimal native loop (escape after some steps for now)
+  for (int i = 0; i < 600; ++i) { // ~10 seconds at 60Hz
+    eng.stepOnce();
+    // TODO: call native renderer when available
+  }
   return 0;
 }
 #endif

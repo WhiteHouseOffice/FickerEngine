@@ -1,10 +1,16 @@
-
 #pragma once
-#include <chrono>
+#include <cstdint>
 
-struct Time {
-  static double now() {
-    using namespace std::chrono;
-    return duration<double>(steady_clock::now().time_since_epoch()).count();
-  }
+class Time {
+public:
+  Time();
+
+  // seconds since last call; clamps to a sane max to avoid huge jumps
+  double tick();
+
+  // fixed simulation step (seconds)
+  static constexpr double kFixedDt = 1.0 / 60.0;
+
+private:
+  double _last; // seconds
 };

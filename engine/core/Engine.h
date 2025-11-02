@@ -1,23 +1,24 @@
 #pragma once
 #include <memory>
-#include <functional>
-
-struct IRenderer;
-
-struct EngineConfig {
-  int width = 800;
-  int height = 600;
-};
 
 class Engine {
 public:
-  Engine(const EngineConfig& cfg, std::unique_ptr<IRenderer> r);
-  ~Engine();                    // defined in Engine.cpp
+  static Engine& instance();
 
-  int runOnce(double dt);       // returns 0 to continue, non-zero to request exit
-  void draw(double t);
+  void init();
+  // Advance the engine by one variable frame (will internally run 0..N fixed updates)
+  void stepOnce();
+
+  // Simple readback of state for debug/UI
+  float angle() const;
+
+  ~Engine();
 
 private:
-  struct Impl;                  // forward declaration for PIMPL
+  Engine();
+  Engine(const Engine&) = delete;
+  Engine& operator=(const Engine&) = delete;
+
+  struct Impl;
   std::unique_ptr<Impl> impl;
 };
