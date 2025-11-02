@@ -1,5 +1,5 @@
-#include "render/RenderMesh.h"
-#include "render/WebGPUContext.h"
+#include "RenderMesh.h"
+#include "WebGPUContext.h"
 #include <cstring>   // for std::memcpy (if ever needed)
 #include <cstdio>
 
