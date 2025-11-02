@@ -1,4 +1,14 @@
 #include "core/Engine.h"
+#include "core/Time.h"
+#include "game/Scene.h"
+#include "game/Game.h"
+#include "game/GameObject.h"
+#include "render/RenderMesh.h"
+#include "render/WebGPUContext.h"
+#include "geom/GridPlane.h"
+#include "geom/MarkerCross.h"
+#include <memory>
+#include <cstdio>
 
 // --- WebGPU headers (types only) ---
 #if __has_include(<emscripten/webgpu.h>)
