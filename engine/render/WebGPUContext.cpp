@@ -1,137 +1,129 @@
 #include "render/WebGPUContext.h"
-
-#include <emscripten/emscripten.h>
-#include <emscripten/html5.h>
-
-#if __has_include(<emscripten/html5_webgpu.h>)
-  #include <emscripten/html5_webgpu.h> // optional helper for surface-from-canvas
-#endif
-
 #include <cstdio>
-#include <cstring>
+#include <cstring>   // for std::strlen if needed
 
-extern "C" WGPUDevice emscripten_webgpu_get_device(void);
+using namespace render;
 
-// JS helpers for DPR and logging
-EM_JS(double, fe_dpr, (), {
-  return (typeof window !== 'undefined' && window.devicePixelRatio) ? window.devicePixelRatio : 1.0;
-});
-EM_JS(void, fe_log, (const char* cstr), {
-  // best-effort small logger
-  if (typeof UTF8ToString === 'function') console.log('[FE]', UTF8ToString(cstr));
-});
+// Small helper: WGPUStringView from C-string
+static inline WGPUStringView sv(const char* s) {
+  return WGPUStringView{ s, (size_t)std::strlen(s) };
+}
 
-// ———————————————————————————————————————————————————————————————————
+WebGPUContext& WebGPUContext::Get() {
+  static WebGPUContext g;
+  return g;
+}
 
-void WebGPUContext::Init(const char* canvasSelector) {
-  selector = canvasSelector;
+void WebGPUContext::Init()
+{
+  if (initialized) return;
 
-  // Create instance (nullptr ok in Emscripten / Dawn shim)
   instance = wgpuCreateInstance(nullptr);
 
-  // Get device synchronously from Emscripten
+  // Create a surface bound to the HTML canvas with id="canvas"
+  // emdawnwebgpu uses the CanvasId chain struct + StringView
+  WGPUSurfaceDescriptor sd{};
+  WGPUSurfaceDescriptorFromCanvasHTMLCanvasId canvasDesc{};
+  canvasDesc.chain.sType = WGPUSType_SurfaceDescriptorFromCanvasHTMLCanvasId;
+  canvasDesc.canvas = sv("canvas");
+
+  // Note: in emdawnwebgpu headers, nextInChain may be NON-const
+  sd.nextInChain = (WGPUChainedStruct*)&canvasDesc;
+
+  surface = wgpuInstanceCreateSurface(instance, &sd);
+
+  // Device/queue
+  // (For now use the default device getter; if you moved to requestAdapter/device,
+  //  keep that path instead.)
   device = emscripten_webgpu_get_device();
-  if (!device) {
-    fe_log("WebGPU device is null (emscripten_webgpu_get_device failed).");
-    return;
-  }
-  queue = wgpuDeviceGetQueue(device);
+  queue  = wgpuDeviceGetQueue(device);
 
-  // Try to create a surface from canvas (if helper header exists)
-#if __has_include(<emscripten/html5_webgpu.h>)
-  {
-    WGPUSurfaceDescriptorFromCanvasHTMLSelector canvasDesc{};
-    canvasDesc.chain.sType = WGPUSType_SurfaceDescriptorFromCanvasHTMLSelector;
-    canvasDesc.selector = selector;
+  // Choose a surface format. Preferred-format helper differs across headers,
+  // so just pick the common BGRA8Unorm which is the usual swapchain format on web.
+  surfaceFormat = WGPUTextureFormat_BGRA8Unorm;
 
-    WGPUSurfaceDescriptor sd{};
-    sd.nextInChain = reinterpret_cast<const WGPUChainedStruct*>(&canvasDesc);
-    surface = wgpuInstanceCreateSurface(instance, &sd);
-  }
-#else
-  surface = nullptr; // we will still compile; BeginFrame will no-op if no surface
-#endif
+  // Configure once with a default size; Engine will call ConfigureSurface with real size.
+  WGPUSurfaceConfiguration cfg{};
+  cfg.device        = device;
+  cfg.format        = surfaceFormat;
+  cfg.usage         = WGPUTextureUsage_RenderAttachment;
+  cfg.alphaMode     = WGPUCompositeAlphaMode_Auto;
+  cfg.viewFormats   = nullptr;
+  cfg.viewFormatCount = 0;
+  cfg.width  = 800;
+  cfg.height = 600;
+  wgpuSurfaceConfigure(surface, &cfg);
 
-  // Choose a default format (BGRA8 is the canvas format in browsers)
-  format = WGPUTextureFormat_BGRA8Unorm;
-
-  EnsureConfigured();
+  // Minimal pipeline state will be created lazily when first draw happens.
+  initialized = true;
 }
 
-int WebGPUContext::CanvasPixelWidth() const {
-  double cssW = 0.0, cssH = 0.0;
-  // If the element is missing, fall back to 1280x720
-  if (EMSCRIPTEN_RESULT_SUCCESS != emscripten_get_element_css_size(selector, &cssW, &cssH)) {
-    cssW = 1280.0;
-    cssH = 720.0;
-  }
-  double dpr = fe_dpr();
-  return (int)(cssW * dpr);
-}
-
-int WebGPUContext::CanvasPixelHeight() const {
-  double cssW = 0.0, cssH = 0.0;
-  if (EMSCRIPTEN_RESULT_SUCCESS != emscripten_get_element_css_size(selector, &cssW, &cssH)) {
-    cssW = 1280.0;
-    cssH = 720.0;
-  }
-  double dpr = fe_dpr();
-  return (int)(cssH * dpr);
-}
-
-void WebGPUContext::ConfigureSurface(int w, int h) {
+void WebGPUContext::ConfigureSurface(int width, int height)
+{
   if (!surface || !device) return;
 
-  // Ensure canvas backing size tracks DPR
-  emscripten_set_canvas_element_size(selector, w, h);
-
   WGPUSurfaceConfiguration cfg{};
-  cfg.device = device;
-  cfg.format = format;
-  cfg.usage  = WGPUTextureUsage_RenderAttachment;
-  cfg.width  = w;
-  cfg.height = h;
+  cfg.device        = device;
+  cfg.format        = surfaceFormat;
+  cfg.usage         = WGPUTextureUsage_RenderAttachment;
+  cfg.alphaMode     = WGPUCompositeAlphaMode_Auto;
+  cfg.viewFormats   = nullptr;
+  cfg.viewFormatCount = 0;
+  cfg.width  = (uint32_t)width;
+  cfg.height = (uint32_t)height;
+
   wgpuSurfaceConfigure(surface, &cfg);
-  configured = true;
 }
 
-void WebGPUContext::EnsureConfigured() {
-  width  = CanvasPixelWidth();
-  height = CanvasPixelHeight();
-  if (surface && width > 0 && height > 0) {
-    ConfigureSurface(width, height);
-  }
-}
-
-WGPUTextureView WebGPUContext::BeginFrame() {
-  if (!surface || !device) {
-    return nullptr; // headless/no-op
-  }
-
-  // If canvas size changed (resizing), reconfigure
-  int w = CanvasPixelWidth();
-  int h = CanvasPixelHeight();
-  if (w != width || h != height || !configured) {
-    ConfigureSurface(w, h);
-  }
-
+WGPUTextureView WebGPUContext::BeginFrame()
+{
+  // Get the current drawable
   WGPUSurfaceTexture st{};
   wgpuSurfaceGetCurrentTexture(surface, &st);
-  if (!st.texture) {
-    // Surface may not be ready yet; skip this frame
-    return nullptr;
+
+  if (!st.texture || st.status != WGPUSurfaceGetCurrentTextureStatus_Success) {
+    // Try once more (some browsers transiently report non-ready)
+    wgpuSurfaceGetCurrentTexture(surface, &st);
+    if (!st.texture || st.status != WGPUSurfaceGetCurrentTextureStatus_Success) {
+      return nullptr;
+    }
   }
 
-  currentTexture = st.texture;
   WGPUTextureViewDescriptor tvd{};
-  return wgpuTextureCreateView(currentTexture, &tvd);
+  tvd.aspect = WGPUTextureAspect_All;
+  return wgpuTextureCreateView(st.texture, &tvd);
 }
 
-void WebGPUContext::EndFrame(WGPUTextureView /*view*/) {
-  if (!surface || !currentTexture) return;
+void WebGPUContext::EndFrame(WGPUTextureView view)
+{
+  if (view) {
+    WGPUTexture tex = wgpuTextureViewGetTexture(view);
+    wgpuTextureViewRelease(view);
 
-  // Present the surface texture and release our reference
-  wgpuSurfacePresent(surface);
-  wgpuTextureRelease(currentTexture);
-  currentTexture = nullptr;
+    // Present & release
+    wgpuSurfacePresent(surface);
+
+    if (tex) {
+      wgpuTextureRelease(tex);
+    }
+  }
+}
+
+void WebGPUContext::Shutdown()
+{
+  if (!initialized) return;
+
+  if (pipeline)        { wgpuRenderPipelineRelease(pipeline); pipeline = nullptr; }
+  if (shader)          { wgpuShaderModuleRelease(shader);     shader   = nullptr; }
+  if (pipelineLayout)  { wgpuPipelineLayoutRelease(pipelineLayout); pipelineLayout = nullptr; }
+  if (bindGroup)       { wgpuBindGroupRelease(bindGroup);     bindGroup = nullptr; }
+  if (bindGroupLayout) { wgpuBindGroupLayoutRelease(bindGroupLayout); bindGroupLayout = nullptr; }
+  if (mvpBuffer)       { wgpuBufferRelease(mvpBuffer);         mvpBuffer = nullptr; }
+
+  if (surface) { wgpuSurfaceRelease(surface); surface = nullptr; }
+  if (queue)   { wgpuQueueRelease(queue);     queue   = nullptr; }
+  if (device)  { wgpuDeviceRelease(device);   device  = nullptr; }
+  if (instance){ wgpuInstanceRelease(instance); instance = nullptr; }
+
+  initialized = false;
 }
