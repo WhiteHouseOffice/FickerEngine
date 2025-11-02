@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 project(FickerEngine)
+include_directories(${CMAKE_SOURCE_DIR}/engine)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -27,30 +28,20 @@ list(REMOVE_DUPLICATES ALL_ENGINE_SOURCES)
 
 add_executable(FickerEngine ${ALL_ENGINE_SOURCES})
 
-target_include_directories(FickerEngine PRIVATE
-    ${CMAKE_SOURCE_DIR}/engine
-)
+# Add engine/ as root include
+target_include_directories(FickerEngine PRIVATE ${CMAKE_SOURCE_DIR}/engine)
 
-# --- Web (Emscripten + WebGPU) ---
 if (EMSCRIPTEN OR BUILD_WEB)
-    message(STATUS "Configuring for WebAssembly (WebGPU)")
-    # GitHub Pages serves index.html; suffix .html ensures emscripten emits HTML.
-    set(CMAKE_EXECUTABLE_SUFFIX ".html")
-
-    target_compile_definitions(FickerEngine PRIVATE FE_WEB=1 FE_WEBGPU=1)
-
-    # IMPORTANT: enable WebGPU for BOTH compile and link so headers & libs resolve
-    target_compile_options(FickerEngine PRIVATE "-sUSE_WEBGPU=1")
-target_link_options(FickerEngine PRIVATE
-    "-sUSE_WEBGPU=1"
-    "-sALLOW_MEMORY_GROWTH=1"
-    "-sASSERTIONS=1"
-    "-sASYNCIFY"
-)
-
-
-# --- Native (placeholder; no GL yet) ---
+  message(STATUS "Configuring for WebAssembly (WebGPU)")
+  set(CMAKE_EXECUTABLE_SUFFIX ".html")
+  target_compile_definitions(FickerEngine PRIVATE FE_WEB=1 FE_WEBGPU=1)
+  target_compile_options(FickerEngine PRIVATE "-sUSE_WEBGPU=1")
+  target_link_options(FickerEngine PRIVATE "-sUSE_WEBGPU=1" "-sALLOW_MEMORY_GROWTH=1" "-sASSERTIONS=1" "-sASYNCIFY")
 else()
-    message(STATUS "Configuring for native build (no GPU backend wired yet)")
-    # If/when you add native OpenGL/Vulkan, link it here.
+  message(STATUS "Native build: excluding WebGPU-only sources")
+  # Exclude WebGPU-only .cpp files from native builds
+  set_source_files_properties(
+    engine/render/WebGPUContext.cpp
+    PROPERTIES HEADER_FILE_ONLY TRUE
+  )
 endif()
