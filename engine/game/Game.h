@@ -1,17 +1,9 @@
 #pragma once
-#include "core/Input.h"
 
-struct Player {
-  float x = 0.f, y = 0.f;
-  float vx = 0.f, vy = 0.f;
-};
+// Minimal stub so the project builds without any input dependencies.
+// We can wire real input later once we settle on the path/API.
 
-class Game {
-public:
-  void init() {}
-  void fixedUpdate(double dt);
-
-  const Player& player() const { return _p; }
-private:
-  Player _p;
+struct Game {
+    void Init() {}
+    void Update(float /*dt*/) {}
 };
