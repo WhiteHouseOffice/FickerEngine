@@ -5,8 +5,8 @@
 #include "math/MiniMath.h"
 #include "render/WebGPUContext.h"
 #include <memory>
-#include "render/RenderMesh.h"   // declares render::g_data
-using render::g_data;            // make unqualified g_data refer to render::g_data
+#include "render/RenderMesh.h"   // declares render::render::g_data
+using render::render::g_data;            // make unqualified render::g_data refer to render::render::g_data
 
 // Make WebGPU types visible in this TU (resilient include)
 #if defined(FE_WEBGPU)
@@ -48,7 +48,7 @@ struct Engine::Impl {
     extern struct GPUData {
       WGPUBuffer vbo; WGPUBuffer ibo; uint32_t indexCount;
       WGPUIndexFormat indexFormat; WGPUPrimitiveTopology topology;
-    } g_data;
+    } render::g_data;
 
     // Encode and submit render pass
     WGPUCommandEncoder enc = wgpuDeviceCreateCommandEncoder(ctx.device, nullptr);
@@ -66,9 +66,9 @@ struct Engine::Impl {
     WGPURenderPassEncoder pass = wgpuCommandEncoderBeginRenderPass(enc, &rp);
     wgpuRenderPassEncoderSetPipeline(pass, ctx.pipeline);
     wgpuRenderPassEncoderSetBindGroup(pass, 0, ctx.bindGroup, 0, nullptr);
-    wgpuRenderPassEncoderSetVertexBuffer(pass, 0, g_data.vbo, 0, WGPU_WHOLE_SIZE);
-    wgpuRenderPassEncoderSetIndexBuffer(pass, g_data.ibo, g_data.indexFormat, 0, WGPU_WHOLE_SIZE);
-    wgpuRenderPassEncoderDrawIndexed(pass, g_data.indexCount, 1, 0, 0, 0);
+    wgpuRenderPassEncoderSetVertexBuffer(pass, 0, render::g_data.vbo, 0, WGPU_WHOLE_SIZE);
+    wgpuRenderPassEncoderSetIndexBuffer(pass, render::g_data.ibo, render::g_data.indexFormat, 0, WGPU_WHOLE_SIZE);
+    wgpuRenderPassEncoderDrawIndexed(pass, render::g_data.indexCount, 1, 0, 0, 0);
     wgpuRenderPassEncoderEnd(pass);
 
     WGPUCommandBuffer cmds = wgpuCommandEncoderFinish(enc, nullptr);
