@@ -1,6 +1,3 @@
-cp runtime/main.cpp runtime/main.cpp.bak 2>/dev/null || true
-
-cat > runtime/main.cpp <<'CPP'
 #include "core/Engine.h"
 
 #ifdef __EMSCRIPTEN__
@@ -18,7 +15,7 @@ int main(int /*argc*/, char** /*argv*/) {
     g_engine.init();
 
 #ifdef __EMSCRIPTEN__
-    // 0 = browser driven FPS, 1 = simulate infinite loop
+    // 0 = browser-driven FPS, 1 = simulate infinite loop
     emscripten_set_main_loop_arg(tick, nullptr, 0, 1);
 #else
     for (;;) { tick(nullptr); }
@@ -26,4 +23,3 @@ int main(int /*argc*/, char** /*argv*/) {
 
     return 0;
 }
-CPP
