@@ -1,11 +1,8 @@
 #pragma once
-
-// Dawn WebGPU C header provided by the emdawnwebgpu port
 #include <webgpu/webgpu.h>
 
 namespace render {
 
-// Minimal singleton context used by Engine
 class WebGPUContext {
 public:
   static WebGPUContext& Get() {
@@ -13,33 +10,31 @@ public:
     return s;
   }
 
-  // Initialize instance, adapter, device, surface, queue
+  // Create instance/adapter/device/queue/surface
   void Init();
 
-  // (Re)configure the surface (call once after Init, or when canvas size changes)
+  // Configure surface (call after Init, and on resize)
   void Configure(int width, int height);
 
-  // Acquire a frame's view. Returns nullptr if no texture is available.
+  // Per-frame acquire/present
   WGPUTextureView BeginFrame();
-
-  // Present and clean up (releases the view)
   void EndFrame(WGPUTextureView view);
 
-  // Quick getters
-  WGPUDevice Device() const { return device; }
-  WGPUQueue  Queue()  const { return queue; }
+  // Accessors (use these, not private fields)
+  WGPUDevice        Device()        const { return device; }
+  WGPUQueue         Queue()         const { return queue; }
+  WGPUSurface       Surface()       const { return surface; }
   WGPUTextureFormat SurfaceFormat() const { return surfaceFormat; }
 
 private:
   WebGPUContext() = default;
 
-  // WebGPU handles
-  WGPUInstance      instance       = nullptr;
-  WGPUAdapter       adapter        = nullptr;
-  WGPUDevice        device         = nullptr;
-  WGPUQueue         queue          = nullptr;
-  WGPUSurface       surface        = nullptr;
-  WGPUTextureFormat surfaceFormat  = WGPUTextureFormat_BGRA8Unorm; // safe default
+  WGPUInstance      instance      = nullptr;
+  WGPUAdapter       adapter       = nullptr;
+  WGPUDevice        device        = nullptr;
+  WGPUQueue         queue         = nullptr;
+  WGPUSurface       surface       = nullptr;
+  WGPUTextureFormat surfaceFormat = WGPUTextureFormat_BGRA8Unorm;
 
   bool initialized = false;
 };
