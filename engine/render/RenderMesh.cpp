@@ -2,7 +2,6 @@
 
 #if defined(FE_WEBGPU)
 #include "WebGPUContext.h"
-#include <webgpu/webgpu.h>
 #include <stdint.h>
 
 struct GPUData {

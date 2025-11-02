@@ -4,7 +4,6 @@
 #include "game/Game.h"
 #include "math/MiniMath.h"
 #include "render/WebGPUContext.h"
-#include <webgpu/webgpu.h>
 
 // ... inside render_frame():
 extern struct GPUData {
