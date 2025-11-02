@@ -6,7 +6,19 @@
 
 #if defined(FE_WEB)
   #include <emscripten/emscripten.h>
+  #define GL_GLEXT_PROTOTYPES 1
   #include <GLES2/gl2.h>
+  #include <GLES2/gl2ext.h>
+  // Legacy fixed-function calls are emulated by Emscripten;
+  // declare them so the compiler is happy with GLES2 headers.
+  extern "C" {
+    void glMatrixMode(unsigned int);
+    void glLoadMatrixf(const float*);
+    void glColor3f(float,float,float);
+    void glEnableClientState(unsigned int);
+    void glDisableClientState(unsigned int);
+    void glVertexPointer(int,unsigned int,int,const void*);
+  }
 #else
   #include <GL/glew.h>
   #include <GL/gl.h>
@@ -39,7 +51,7 @@ struct Engine::Impl {
 };
 
 Engine& Engine::instance(){ static Engine g; return g; }
-Engine::Engine():impl(std::make_unique<Impl>()){} 
+Engine::Engine():impl(std::make_unique<Impl>()){}
 Engine::~Engine()=default;
 
 void Engine::init(){

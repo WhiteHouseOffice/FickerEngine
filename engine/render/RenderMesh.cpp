@@ -1,8 +1,22 @@
 #include "RenderMesh.h"
-#if !defined(PLATFORM_WEB)
+
+#if defined(FE_WEB)
+  // Emscripten/WebGL path (GLES2)
+  #define GL_GLEXT_PROTOTYPES 1
+  #include <GLES2/gl2.h>
+  #include <GLES2/gl2ext.h>
+  // Emscripten provides LEGACY_GL_EMULATION at runtime, but GLES headers do not declare these:
+  extern "C" {
+    void glEnableClientState(unsigned int);
+    void glDisableClientState(unsigned int);
+    void glVertexPointer(int, unsigned int, int, const void*);
+    void glColor3f(float, float, float);
+  }
+#else
+  // Desktop GL
   #include <GL/glew.h>
+  #include <GL/gl.h>
 #endif
-#include <GL/gl.h>
 
 bool RenderMesh::Upload(const MeshData& d){
     mode_ = (d.topology==MeshData::Topology::Lines) ? 0x0001 /*GL_LINES*/ : 0x0004 /*GL_TRIANGLES*/;
@@ -21,6 +35,7 @@ bool RenderMesh::Upload(const MeshData& d){
 
 void RenderMesh::Draw(float r,float g,float b) const{
     if(!indexCount_) return;
+
     glColor3f(r,g,b);
 
     glBindBuffer(0x8892 /*GL_ARRAY_BUFFER*/, vbo_);

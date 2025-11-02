@@ -1,5 +1,5 @@
 #pragma once
-#include "input/Input.h"
+#include "core/Input.h"
 
 struct Player {
   float x = 0.f, y = 0.f;
