@@ -3,24 +3,13 @@
 #include "game/Scene.h"
 #include "game/Game.h"
 #include "math/MiniMath.h"
+#include "render/RenderMesh.h"
+
 #include <memory>
 
-#if defined(FE_WEB)
-  #include <emscripten/emscripten.h>
-  #define GL_GLEXT_PROTOTYPES 1
-  #include <GLES2/gl2.h>
-  #include <GLES2/gl2ext.h>
-  extern "C" {
-    void glMatrixMode(unsigned int);
-    void glLoadMatrixf(const float*);
-    void glColor3f(float,float,float);
-    void glEnableClientState(unsigned int);
-    void glDisableClientState(unsigned int);
-    void glVertexPointer(int,unsigned int,int,const void*);
-  }
-#else
-  #include <GL/glew.h>
-  #include <GL/gl.h>
+#if defined(FE_WEBGPU)
+  #include "render/WebGPUContext.h"
+  #include <webgpu/webgpu_cpp.h>
 #endif
 
 struct Engine::Impl {
@@ -28,22 +17,55 @@ struct Engine::Impl {
   Scene scene;
   Game  game;
 
-  void render_frame(int w,int h){
-    // Fixed-function projection
+  void render_frame(uint32_t w,uint32_t h){
+#if defined(FE_WEBGPU)
+    auto& ctx = WebGPUContext::Get();
+    if (!ctx.device) ctx.Init("#canvas");
+    ctx.ConfigureSurface(w,h);
+
+    // Acquire backbuffer
+    auto backView = ctx.BeginFrame();
+    if (!backView) return;
+
+    // P * V
     Mat4 P = perspective(60.f*3.1415926f/180.f, (float)w/(float)h, 0.01f, 500.f);
+    Mat4 V = game.View();
+    Mat4 PV = matMul(P, V);
+    ctx.queue.WriteBuffer(ctx.mvpBuffer, 0, PV.m, sizeof(float)*16);
 
-    glViewport(0,0,w,h);
-    glEnable(0x0B71 /*GL_DEPTH_TEST*/);
-    glClearColor(0.05f,0.05f,0.06f,1.f);
-    glClear(0x00004000 /*GL_COLOR_BUFFER_BIT*/ | 0x00000100 /*GL_DEPTH_BUFFER_BIT*/);
+    // Encoder / pass
+    wgpu::CommandEncoder enc = ctx.device.CreateCommandEncoder();
+    wgpu::RenderPassColorAttachment color{};
+    color.view = backView;
+    color.clearValue = {0.05f,0.05f,0.06f,1.0f};
+    color.loadOp  = wgpu::LoadOp::Clear;
+    color.storeOp = wgpu::StoreOp::Store;
 
-    glMatrixMode(0x1701 /*GL_PROJECTION*/);
-    glLoadMatrixf(P.m);
-    glMatrixMode(0x1700 /*GL_MODELVIEW*/);
-    glLoadMatrixf(game.View().m);
+    wgpu::RenderPassDescriptor rp{};
+    rp.colorAttachmentCount = 1;
+    rp.colorAttachments = &color;
 
-    for (auto* obj : scene.drawOrder)
-      obj->mesh.Draw(obj->color[0], obj->color[1], obj->color[2]);
+    wgpu::RenderPassEncoder pass = enc.BeginRenderPass(&rp);
+    pass.SetPipeline(ctx.pipeline);
+    pass.SetBindGroup(0, ctx.bindGroup);
+
+    // Draw all objects as lines (grid + marker)
+    // We rely on the last uploaded mesh buffers stored in static GPUData inside RenderMesh.cpp.
+    extern struct GPUData { wgpu::Buffer vbo; wgpu::Buffer ibo; uint32_t indexCount; wgpu::IndexFormat indexFormat; wgpu::PrimitiveTopology topology; } g_data;
+    pass.SetVertexBuffer(0, g_data.vbo, 0, WGPU_WHOLE_SIZE);
+    pass.SetIndexBuffer(g_data.ibo, g_data.indexFormat, 0, WGPU_WHOLE_SIZE);
+    pass.DrawIndexed(g_data.indexCount);
+
+    pass.End();
+
+    auto cmds = enc.Finish();
+    ctx.queue.Submit(1, &cmds);
+
+    ctx.EndFrame(backView);
+#else
+    // Native / other paths could go here later
+    (void)w; (void)h;
+#endif
   }
 };
 
@@ -52,22 +74,19 @@ Engine::Engine():impl(std::make_unique<Impl>()){}
 Engine::~Engine()=default;
 
 void Engine::init(){
-#if !defined(FE_WEB)
-  glewInit();
-#endif
   impl->scene.Build();
   impl->game.Init();
 }
 
 void Engine::stepOnce(){
-  const double dt = impl->time.tick();        // seconds
-  const float  clamped = (float)std::min(dt, 0.1); // avoid giant steps
+  const double dt = impl->time.tick();
+  const float  clamped = (float)std::min(dt, 0.1);
   impl->game.Update(clamped);
   impl->render_frame(1280, 720);
 }
 
 #if defined(FE_WEB)
 extern "C" {
-  EMSCRIPTEN_KEEPALIVE void fe_step_once(){ Engine::instance().stepOnce(); }
+  __attribute__((used)) void fe_step_once(){ Engine::instance().stepOnce(); }
 }
 #endif
