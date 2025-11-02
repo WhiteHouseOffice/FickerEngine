@@ -6,10 +6,13 @@ struct Vec3 {
     float x, y, z;
     Vec3() : x(0), y(0), z(0) {}
     Vec3(float X, float Y, float Z) : x(X), y(Y), z(Z) {}
+
     Vec3 operator+(const Vec3& o) const { return {x+o.x, y+o.y, z+o.z}; }
     Vec3 operator-(const Vec3& o) const { return {x-o.x, y-o.y, z-o.z}; }
-    Vec3 operator*(float s) const { return {x*s, y*s, z*s}; }
+    Vec3 operator*(float s)     const { return {x*s, y*s, z*s}; }
+
     Vec3& operator+=(const Vec3& o){ x+=o.x; y+=o.y; z+=o.z; return *this; }
+    Vec3& operator-=(const Vec3& o){ x-=o.x; y-=o.y; z-=o.z; return *this; }   // ← needed
 };
 
 inline Vec3 cross(const Vec3& a, const Vec3& b) {
@@ -24,7 +27,7 @@ inline Vec3 normalize(const Vec3& v){
 }
 
 struct Mat4 {
-    // Column-major 4x4 (matches WGSL/GLSL expectations)
+    // Column-major 4x4
     float m[16];
     static Mat4 identity(){
         Mat4 r{}; std::memset(r.m, 0, sizeof(r.m));
@@ -45,9 +48,7 @@ inline Mat4 mul(const Mat4& A, const Mat4& B){
     }
     return R;
 }
-
-// Some files use matMul(); keep both names valid.
-inline Mat4 matMul(const Mat4& A, const Mat4& B) { return mul(A, B); }
+inline Mat4 matMul(const Mat4& A, const Mat4& B) { return mul(A,B); }
 
 inline Mat4 lookAt(const Vec3& eye, const Vec3& center, const Vec3& up){
     Vec3 f = normalize(Vec3{center.x-eye.x, center.y-eye.y, center.z-eye.z});
