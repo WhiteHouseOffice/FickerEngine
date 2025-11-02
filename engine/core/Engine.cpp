@@ -1,6 +1,7 @@
 #include "core/Engine.h"
 #include "core/Time.h"
 #include "game/Scene.h"
+#include "game/Game.h"
 #include "math/MiniMath.h"
 #include <memory>
 
@@ -25,13 +26,11 @@
 struct Engine::Impl {
   Time  time;
   Scene scene;
-  float eye[3]{6.0f,5.0f,8.0f};
-  float ctr[3]{0.0f,0.0f,0.0f};
-  float up [3]{0.0f,1.0f,0.0f};
+  Game  game;
 
   void render_frame(int w,int h){
-    Mat4 P = perspective(60.f*3.1415926f/180.f, (float)w/(float)h, 0.01f, 200.f);
-    Mat4 V = lookAt(eye, ctr, up);
+    // Fixed-function projection
+    Mat4 P = perspective(60.f*3.1415926f/180.f, (float)w/(float)h, 0.01f, 500.f);
 
     glViewport(0,0,w,h);
     glEnable(0x0B71 /*GL_DEPTH_TEST*/);
@@ -41,7 +40,7 @@ struct Engine::Impl {
     glMatrixMode(0x1701 /*GL_PROJECTION*/);
     glLoadMatrixf(P.m);
     glMatrixMode(0x1700 /*GL_MODELVIEW*/);
-    glLoadMatrixf(V.m);
+    glLoadMatrixf(game.View().m);
 
     for (auto* obj : scene.drawOrder)
       obj->mesh.Draw(obj->color[0], obj->color[1], obj->color[2]);
@@ -57,9 +56,13 @@ void Engine::init(){
   glewInit();
 #endif
   impl->scene.Build();
+  impl->game.Init();
 }
 
 void Engine::stepOnce(){
+  const double dt = impl->time.tick();        // seconds
+  const float  clamped = (float)std::min(dt, 0.1); // avoid giant steps
+  impl->game.Update(clamped);
   impl->render_frame(1280, 720);
 }
 
