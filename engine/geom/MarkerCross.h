@@ -1,14 +1,15 @@
 #pragma once
-#include "render/RenderMesh.h"
-struct MarkerCross {
-    static MeshData Build(float y=0.1f,float s=0.25f){
-        MeshData m; m.topology=MeshData::Topology::Lines;
-        auto add=[&](float x,float z){ m.positions.insert(m.positions.end(), {x,y,z}); };
-        add(-s,0); add(s,0);
-        add(0,-s); add(0,s);
-        add(-s,-s); add(s,s);
-        add(-s,s); add(s,-s);
-        for(uint32_t i=0;i<8;i+=2){ m.indices.push_back(i); m.indices.push_back(i+1); }
-        return m;
-    }
+#include <vector>
+#include <cstdint>
+
+namespace geom {
+
+// Simple 3-axis marker centered at origin, length in meters
+struct LinesData {
+    std::vector<float>    positions; // xyz triplets
+    std::vector<uint32_t> indices;   // line list
 };
+
+LinesData BuildMarkerCross(float length = 0.25f);
+
+} // namespace geom
