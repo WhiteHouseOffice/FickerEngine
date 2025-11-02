@@ -54,4 +54,5 @@ else()
     set_target_properties(engine PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
     )
+target_include_directories(engine PRIVATE engine)
 endif()

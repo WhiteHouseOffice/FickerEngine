@@ -1,4 +1,4 @@
-#include "engine/core/Engine.h"
+#include "core/Engine.h"
 
 #if defined(FE_WEB)
 #include <emscripten/emscripten.h>
