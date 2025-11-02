@@ -1,50 +1,51 @@
 #include "core/Engine.h"
+#include "render/WebGPUContext.h"
+
 #include "game/Scene.h"
 #include "game/Game.h"
-#include "render/WebGPUContext.h"
-// ... other includes ...
 
-using render::WebGPUContext;
+// If you have these geometry helpers, keep the includes.
+// Otherwise you can comment them out until we hook them up.
+// #include "geom/GridPlane.h"
+// #include "geom/MarkerCross.h"
+
+Engine& Engine::instance() {
+  static Engine e;
+  return e;
+}
 
 void Engine::init() {
-  // Time::init();  // if you have this
-  WebGPUContext::Get().Init();
-  WebGPUContext::Get().Configure(1280, 720); // simple initial size
-  // create scene, meshes, etc...
+  // Bring up GPU
+  render::WebGPUContext::Get().Init();
+  render::WebGPUContext::Get().Configure(1280, 720);
+
+  // Create scene + game logic containers if your headers declare them
+  // (Safe to leave as nullptrs if you don’t need them yet.)
+  // scene = std::make_unique<Scene>();
+  // game  = std::make_unique<Game>();
+}
+
+void Engine::update() {
+  // Advance gameplay / simulation; if you have a Time system, call it here.
+  // if (game)  game->Update();
+  // if (scene) scene->Update();
 }
 
 void Engine::render() {
-  auto& ctx = WebGPUContext::Get();
+  auto& ctx = render::WebGPUContext::Get();
+  if (!ctx.Device() || !ctx.Queue()) {
+    // If Init() is still stubbed, just early-out to avoid null deref.
+    return;
+  }
+
   WGPUTextureView backbuffer = ctx.BeginFrame();
-  if (!backbuffer) return; // skip frame if no texture
 
-  // Record commands
-  WGPUCommandEncoderDescriptor encDesc{};
-  WGPUCommandEncoder encoder = wgpuDeviceCreateCommandEncoder(ctx.Device(), &encDesc);
+  // Here you’d encode your render pass and draw calls.
+  // This stub keeps the method compiled until we wire Dawn pass creation.
 
-  // Simple render pass that clears to dark grey
-  WGPURenderPassColorAttachment color{};
-  color.view       = backbuffer;
-  color.loadOp     = WGPULoadOp_Clear;
-  color.storeOp    = WGPUStoreOp_Store;
-  color.clearValue = {0.1f, 0.1f, 0.1f, 1.0f};
-
-  WGPURenderPassDescriptor rp{};
-  rp.colorAttachmentCount = 1;
-  rp.colorAttachments     = &color;
-
-  WGPURenderPassEncoder pass = wgpuCommandEncoderBeginRenderPass(encoder, &rp);
-  // TODO: bind pipeline + draw your grid once we wire the pipeline
-  wgpuRenderPassEncoderEnd(pass);
-
-  WGPUCommandBufferDescriptor cbDesc{};
-  WGPUCommandBuffer cb = wgpuCommandEncoderFinish(encoder, &cbDesc);
-  wgpuQueueSubmit(ctx.Queue(), 1, &cb);
-
-  // Present
   ctx.EndFrame(backbuffer);
+}
 
-  // Cleanup local handles
-  wgpuCommandBufferRelease(cb);
-  wgpuCommandEncoderRelease(encoder);
+void Engine::shutdown() {
+  // Place for cleanup when you add explicit releases in WebGPUContext
 }

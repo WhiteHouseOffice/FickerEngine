@@ -6,20 +6,25 @@ namespace render {
 
 class WebGPUContext {
 public:
-  // Singleton access (defined in .cpp)
+  // Singleton
   static WebGPUContext& Get();
 
-  // Create device/queue/surface and choose surfaceFormat
-  void Init();
+  // Lifetime
+  void Init();                       // create instance/adapter/device/queue/surface
+  void Configure(int width, int height); // (re)configure the swapchain/surface
 
-  // (Re)configure the surface when size changes
-  void ConfigureSurface(int width, int height);
-
-  // Frame lifecycle around a render pass
+  // Frame
   WGPUTextureView BeginFrame();
   void            EndFrame(WGPUTextureView view);
 
-  // Read-only accessors used by other systems (e.g., RenderMesh)
+  // Accessors (names kept for compatibility with existing call sites)
+  WGPUDevice        Device()        const { return device; }
+  WGPUQueue         Queue()         const { return queue; }
+  WGPUTextureFormat SurfaceFormat() const { return surfaceFormat; }
+  int               Width()         const { return width; }
+  int               Height()        const { return height; }
+
+  // Also provide Get* aliases in case other files use them
   WGPUDevice        GetDevice()        const { return device; }
   WGPUQueue         GetQueue()         const { return queue; }
   WGPUTextureFormat GetSurfaceFormat() const { return surfaceFormat; }
@@ -27,9 +32,11 @@ public:
   int               GetHeight()        const { return height; }
 
 private:
-  // Only the singleton can construct/destroy
   WebGPUContext() = default;
   ~WebGPUContext() = default;
+
+  // State
+  bool              initialized   = false;
 
   // GPU objects
   WGPUInstance      instance      = nullptr;
