@@ -2,103 +2,104 @@
 #include "core/Time.h"
 #include "game/Scene.h"
 #include "game/Game.h"
-#include "math/MiniMath.h"
 #include "render/WebGPUContext.h"
-#include <memory>
-#include "render/RenderMesh.h"   // declares render::render::g_data
-using render::render::g_data;            // make unqualified render::g_data refer to render::render::g_data
+#include "render/RenderMesh.h"    // for render::g_data
+#include "geom/GridPlane.h"
+#include "geom/MarkerCross.h"
+#include "math/MiniMath.h"
 
-// Make WebGPU types visible in this TU (resilient include)
-#if defined(FE_WEBGPU)
-  #if __has_include(<webgpu/webgpu.h>)
-    #include <webgpu/webgpu.h>
-  #elif __has_include(<emscripten/webgpu.h>)
-    #include <emscripten/webgpu.h>
-  #else
-    #error "WebGPU headers not found for Engine.cpp"
-  #endif
+using render::g_data;  // global GPU context data
+
+Engine::Engine() = default;
+Engine::~Engine() = default;
+
+void Engine::Init()
+{
+#if FE_WEBGPU
+    // Initialize WebGPU context (device, queue, surface, etc.)
+    render::WebGPUContext::Init();
 #endif
 
-struct Engine::Impl {
-  Time  time;
-  Scene scene;
-  Game  game;
+    scene = std::make_unique<Scene>();
+    game  = std::make_unique<Game>();
 
-  void render_frame(uint32_t w, uint32_t h) {
-#if defined(FE_WEBGPU)
-  auto& ctx = WebGPUContext::Get();
-  if (!ctx.device) ctx.Init("#canvas");
-  if (!ctx.device) {
-    // No WebGPU support: do nothing this frame (console already logs why)
-    return;
-  }
-  ctx.ConfigureSurface(w, h);
+    // Add a grid floor for visual reference
+    auto grid = std::make_shared<GameObject>();
+    grid->mesh = std::make_shared<RenderMesh>();
+    grid->mesh->UploadCPU(render::g_data.device, geom::GridPlane(20, 20, 1.0f));
+    scene->AddObject(grid);
 
-    // Compute PV matrix and upload to uniform buffer
-    Mat4 P = perspective(60.f * 3.1415926f / 180.f, (float)w / (float)h, 0.01f, 500.f);
-    Mat4 V = game.View();
-    Mat4 PV = matMul(P, V);
-    wgpuQueueWriteBuffer(ctx.queue, ctx.mvpBuffer, 0, PV.m, sizeof(float) * 16);
+    // Add a simple cross marker at origin
+    auto marker = std::make_shared<GameObject>();
+    marker->mesh = std::make_shared<RenderMesh>();
+    marker->mesh->UploadCPU(render::g_data.device, geom::MarkerCross());
+    scene->AddObject(marker);
 
-    // Acquire backbuffer
-    WGPUTextureView backView = ctx.BeginFrame();
-    if (!backView) return;
+    Time::Init();
+}
 
-    // GPU buffers exported from RenderMesh.cpp
-    extern struct GPUData {
-      WGPUBuffer vbo; WGPUBuffer ibo; uint32_t indexCount;
-      WGPUIndexFormat indexFormat; WGPUPrimitiveTopology topology;
-    } render::g_data;
+void Engine::Update()
+{
+    Time::Update();
+    float dt = Time::DeltaTime();
 
-    // Encode and submit render pass
-    WGPUCommandEncoder enc = wgpuDeviceCreateCommandEncoder(ctx.device, nullptr);
+    if (game)
+        game->Update(dt);
 
-    WGPURenderPassColorAttachment color = {};
-    color.view = backView;
-    color.loadOp  = WGPULoadOp_Clear;
-    color.storeOp = WGPUStoreOp_Store;
-    color.clearValue = {0.05f, 0.05f, 0.06f, 1.0f};
+    if (scene)
+        scene->Update(dt);
+}
 
-    WGPURenderPassDescriptor rp = {};
-    rp.colorAttachmentCount = 1;
-    rp.colorAttachments     = &color;
+void Engine::Render()
+{
+#if FE_WEBGPU
+    auto device = render::g_data.device;
+    auto queue  = render::g_data.queue;
+    auto ctx    = render::g_data.context;
 
-    WGPURenderPassEncoder pass = wgpuCommandEncoderBeginRenderPass(enc, &rp);
-    wgpuRenderPassEncoderSetPipeline(pass, ctx.pipeline);
-    wgpuRenderPassEncoderSetBindGroup(pass, 0, ctx.bindGroup, 0, nullptr);
-    wgpuRenderPassEncoderSetVertexBuffer(pass, 0, render::g_data.vbo, 0, WGPU_WHOLE_SIZE);
-    wgpuRenderPassEncoderSetIndexBuffer(pass, render::g_data.ibo, render::g_data.indexFormat, 0, WGPU_WHOLE_SIZE);
-    wgpuRenderPassEncoderDrawIndexed(pass, render::g_data.indexCount, 1, 0, 0, 0);
+    if (!device || !queue || !ctx)
+        return;
+
+    // Begin WebGPU frame
+    WGPUSurfaceTexture surfaceTex;
+    wgpuSurfaceGetCurrentTexture(ctx.surface, &surfaceTex);
+
+    WGPUTextureView view = wgpuTextureCreateView(surfaceTex.texture, nullptr);
+
+    WGPUCommandEncoderDescriptor encDesc{};
+    WGPUCommandEncoder encoder = wgpuDeviceCreateCommandEncoder(device, &encDesc);
+
+    // (You’ll add rendering passes here later)
+    // For now, just clear the screen to gray.
+    WGPURenderPassColorAttachment colorAttach{};
+    colorAttach.view = view;
+    colorAttach.clearValue = {0.3f, 0.3f, 0.3f, 1.0f};
+    colorAttach.loadOp = WGPULoadOp_Clear;
+    colorAttach.storeOp = WGPUStoreOp_Store;
+
+    WGPURenderPassDescriptor passDesc{};
+    passDesc.colorAttachmentCount = 1;
+    passDesc.colorAttachments = &colorAttach;
+
+    WGPURenderPassEncoder pass = wgpuCommandEncoderBeginRenderPass(encoder, &passDesc);
     wgpuRenderPassEncoderEnd(pass);
 
-    WGPUCommandBuffer cmds = wgpuCommandEncoderFinish(enc, nullptr);
-    wgpuQueueSubmit(ctx.queue, 1, &cmds);
+    WGPUCommandBufferDescriptor cmdBufDesc{};
+    WGPUCommandBuffer cmdBuf = wgpuCommandEncoderFinish(encoder, &cmdBufDesc);
+    wgpuQueueSubmit(queue, 1, &cmdBuf);
 
-    ctx.EndFrame(backView);
-#else
-    (void)w; (void)h;
+    wgpuTextureViewRelease(view);
+    wgpuCommandBufferRelease(cmdBuf);
+    wgpuCommandEncoderRelease(encoder);
 #endif
-  }
-};
-
-Engine& Engine::instance(){ static Engine g; return g; }
-Engine::Engine():impl(std::make_unique<Impl>()){}
-Engine::~Engine()=default;
-
-void Engine::init(){
-  impl->scene.Build();   // builds grid/marker and uploads via RenderMesh
-  impl->game.Init();     // sets up free-fly camera, etc.
 }
 
-void Engine::stepOnce(){
-  const double dt = impl->time.tick();
-  const float  clamped = (float)std::min(dt, 0.1);
-  impl->game.Update(clamped);
-  impl->render_frame(1280, 720);
-}
+void Engine::Shutdown()
+{
+    scene.reset();
+    game.reset();
 
-#if defined(FE_WEB)
-extern "C" {
-  __attribute__((used)) void fe_step_once(){ Engine::instance().stepOnce(); }
-}
+#if FE_WEBGPU
+    render::WebGPUContext::Shutdown();
 #endif
+}
