@@ -1,64 +1,62 @@
 #pragma once
-
-#include <vector>
 #include <cstdint>
+#include <vector>
 
-#if FE_WEBGPU
-  #include <webgpu/webgpu.h>
-#else
-  // Minimal stubs so native builds don't explode if this header is included.
-  typedef struct WGPUBufferImpl*            WGPUBuffer;
-  typedef struct WGPURenderPassEncoderImpl* WGPURenderPassEncoder;
-  typedef std::uint32_t                     WGPUIndexFormat;
-  typedef std::uint32_t                     WGPUPrimitiveTopology;
-#endif
+namespace geom {
+struct GridPlane;
+struct MarkerCross;
+} // namespace geom
 
 namespace render {
 
-// CPU-side mesh data coming from geom/ (GridPlane, MarkerCross, etc.)
-struct MeshData
-{
-  std::vector<float>         positions;   // interleaved vertex data (at least xyz)
-  std::vector<std::uint16_t> indices;     // 16-bit indices are enough for now
-
-#if FE_WEBGPU
-  WGPUIndexFormat       indexFormat = WGPUIndexFormat_Uint16;
-  WGPUPrimitiveTopology topology    = WGPUPrimitiveTopology_TriangleList;
+// Again, fake handle types so we can compile without real WebGPU headers.
+#if defined(FE_WEBGPU)
+using WGPUBuffer            = void*;
+using WGPUIndexFormat       = std::uint32_t;
+using WGPUPrimitiveTopology = std::uint32_t;
+using WGPURenderPassEncoder = void*;
 #else
-  WGPUIndexFormat       indexFormat = 0;
-  WGPUPrimitiveTopology topology    = 0;
+using WGPURenderPassEncoder = void*;
 #endif
+
+// Simple CPU-side mesh data structure used by the editor/game layer.
+struct MeshData {
+  std::vector<float>         positions;   // xyz triples
+  std::vector<std::uint16_t> indices;     // triangle indices
 };
 
-class RenderMesh
-{
+// RenderMesh is currently a CPU-only stub. We keep the API surface
+// so we can plug a real GPU backend later.
+class RenderMesh {
 public:
-  RenderMesh()          = default;
-  ~RenderMesh()         { Release(); }
+  RenderMesh()  = default;
+  ~RenderMesh() { release(); }
 
-  // Upload CPU geometry to GPU buffers (WebGPU path only if FE_WEBGPU=1).
-  void UploadCPU(const MeshData& data);
+  // Free any GPU/CPU resources
+  void release();
 
-  // Bind buffers and issue a drawIndexed call into an existing render pass.
-  void Bind(WGPURenderPassEncoder pass) const;
+  // Upload CPU data (currently just copies into cpu_ buffer)
+  void uploadCPU(const MeshData& d);
 
-  // Free GPU buffers (safe to call multiple times).
-  void Release();
+  // Bind to a render pass (no-op for now)
+  void bind(WGPURenderPassEncoder pass) const;
+
+  bool valid() const { return !cpu_.positions.empty(); }
 
 private:
-#if FE_WEBGPU
-  WGPUBuffer vbo = nullptr;
-  WGPUBuffer ibo = nullptr;
-#else
-  void*      vbo = nullptr;
-  void*      ibo = nullptr;
-#endif
+  // CPU-side copy of the mesh. In a real backend we'd keep GPU buffers too.
+  MeshData cpu_;
 
-  std::uint32_t         indexCount       = 0;
-  std::uint64_t         vertexBufferSize = 0;
-  std::uint64_t         indexBufferSize  = 0;
-  WGPUIndexFormat       indexFormat;     // no default initializer (set in UploadCPU)
-  WGPUPrimitiveTopology topology;        // no default initializer (set in UploadCPU)
+#if defined(FE_WEBGPU)
+  WGPUBuffer            vertexBuffer_      = nullptr;
+  WGPUBuffer            indexBuffer_       = nullptr;
+  WGPUIndexFormat       indexFormat_       = 0;
+  WGPUPrimitiveTopology topology_          = 0;
+#endif
 };
+
+// Helpers to build meshes from your geom types:
+MeshData MakeMesh(const geom::GridPlane& plane);
+MeshData MakeMesh(const geom::MarkerCross& marker);
 
 } // namespace render

@@ -1,54 +1,56 @@
 #pragma once
 #include <cstdint>
-#include <webgpu/webgpu.h>
 
 namespace render {
 
+// Minimal fake WebGPU handle types so we don't depend on system WebGPU headers.
+// This keeps the rest of the engine code compiling on any Emscripten version.
+#if defined(FE_WEBGPU)
+using WGPUInstance          = void*;
+using WGPUAdapter           = void*;
+using WGPUDevice            = void*;
+using WGPUQueue             = void*;
+using WGPUSurface           = void*;
+using WGPUTextureView       = void*;
+using WGPUTextureFormat     = std::uint32_t;
+#else
+using WGPUTextureView       = void*;
+#endif
+
 class WebGPUContext {
 public:
-  // Singleton
+  // Singleton accessor
   static WebGPUContext& Get();
 
-  // Lifetime
-  void Init();                       // create instance/adapter/device/queue/surface
-  void Configure(int width, int height); // (re)configure the swapchain/surface
+  // Lifecycle
+  void init();                     // called once from Engine
+  void configure(int width, int height); // placeholder for swapchain config
+  void resize(int width, int height);    // placeholder for resize handling
 
-  // Frame
-  WGPUTextureView BeginFrame();
-  void            EndFrame(WGPUTextureView view);
+  // Frame handling (all stubs for now)
+  WGPUTextureView acquireSwapchainView();
+  void present();
 
-  // Accessors (names kept for compatibility with existing call sites)
-  WGPUDevice        Device()        const { return device; }
-  WGPUQueue         Queue()         const { return queue; }
-  WGPUTextureFormat SurfaceFormat() const { return surfaceFormat; }
-  int               Width()         const { return width; }
-  int               Height()        const { return height; }
-
-  // Also provide Get* aliases in case other files use them
-  WGPUDevice        GetDevice()        const { return device; }
-  WGPUQueue         GetQueue()         const { return queue; }
-  WGPUTextureFormat GetSurfaceFormat() const { return surfaceFormat; }
-  int               GetWidth()         const { return width; }
-  int               GetHeight()        const { return height; }
+  bool isReady() const { return initialized_; }
 
 private:
-  WebGPUContext() = default;
+  WebGPUContext()  = default;
   ~WebGPUContext() = default;
 
-  // State
-  bool              initialized   = false;
+  bool initialized_ = false;
 
-  // GPU objects
-  WGPUInstance      instance      = nullptr;
-  WGPUAdapter       adapter       = nullptr;
-  WGPUDevice        device        = nullptr;
-  WGPUQueue         queue         = nullptr;
-  WGPUSurface       surface       = nullptr;
-  WGPUTextureFormat surfaceFormat = WGPUTextureFormat_Undefined;
-
-  // Backbuffer size
-  int               width         = 0;
-  int               height        = 0;
+#if defined(FE_WEBGPU)
+  // "Handles" are just void* right now, but we keep the layout
+  // so we can plug in real WebGPU later without touching users.
+  WGPUInstance      instance_       = nullptr;
+  WGPUAdapter       adapter_        = nullptr;
+  WGPUDevice        device_         = nullptr;
+  WGPUQueue         queue_          = nullptr;
+  WGPUSurface       surface_        = nullptr;
+  WGPUTextureFormat swapchainFormat_ = 0;
+  int               width_          = 0;
+  int               height_         = 0;
+#endif
 };
 
 } // namespace render

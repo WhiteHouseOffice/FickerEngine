@@ -1,43 +1,65 @@
+#include <cstdio>
 #include "render/WebGPUContext.h"
-
-// NOTE: This file only ensures symbols used by Engine.cpp / RenderMesh.cpp exist.
-// The internals of Init/Configure/BeginFrame/EndFrame can be filled/updated to the
-// exact Dawn/emdawnwebgpu API you’re using next.
 
 namespace render {
 
 WebGPUContext& WebGPUContext::Get() {
-  static WebGPUContext s;
-  return s;
+  static WebGPUContext s_instance;
+  return s_instance;
 }
 
-void WebGPUContext::Init() {
-  if (initialized) return;
+void WebGPUContext::init() {
+  if (initialized_) {
+    return;
+  }
 
-  // Minimal skeleton; fill with your actual adapter/device/surface creation.
-  // (Keeping no-ops here avoids compile/link errors until we wire Dawn calls.)
-  instance = nullptr;
-  adapter  = nullptr;
-  device   = nullptr;
-  queue    = nullptr;
-  surface  = nullptr;
-  surfaceFormat = WGPUTextureFormat_BGRA8Unorm; // common default; adjust later
-  initialized = true;
+#if defined(FE_WEBGPU)
+  std::printf("[WebGPUContext] (stub) init() called. No real GPU yet.\n");
+#else
+  std::printf("[WebGPUContext] (stub) init() called with FE_WEBGPU disabled.\n");
+#endif
+
+  initialized_ = true;
 }
 
-void WebGPUContext::Configure(int w, int h) {
-  width  = w;
-  height = h;
-  // In your real implementation, call wgpuDeviceCreateSurface / configure surface here.
+void WebGPUContext::configure(int width, int height) {
+  // In a real WebGPU backend this is where we'd create / configure the surface +
+  // swapchain. For now, just store the size and log once.
+#if defined(FE_WEBGPU)
+  width_  = width;
+  height_ = height;
+  std::printf("[WebGPUContext] (stub) configure(%d, %d)\n", width, height);
+#else
+  (void)width;
+  (void)height;
+#endif
 }
 
-WGPUTextureView WebGPUContext::BeginFrame() {
-  // Return a null view for now; your real code will grab current texture view.
+void WebGPUContext::resize(int width, int height) {
+#if defined(FE_WEBGPU)
+  width_  = width;
+  height_ = height;
+  std::printf("[WebGPUContext] (stub) resize(%d, %d)\n", width, height);
+#else
+  (void)width;
+  (void)height;
+#endif
+}
+
+WGPUTextureView WebGPUContext::acquireSwapchainView() {
+  // Real implementation would acquire the current drawable / swapchain texture.
+  // Stub: just return nullptr so callers can early-out.
+#if defined(FE_WEBGPU)
+  std::printf("[WebGPUContext] (stub) acquireSwapchainView() -> null\n");
+#endif
   return nullptr;
 }
 
-void WebGPUContext::EndFrame(WGPUTextureView /*view*/) {
-  // Submit/present in your real implementation.
+void WebGPUContext::present() {
+  // Real implementation would present the frame.
+#if defined(FE_WEBGPU)
+  std::printf("[WebGPUContext] (stub) present()\n");
+#endif
 }
 
 } // namespace render
