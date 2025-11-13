@@ -1,94 +1,120 @@
-#include "RenderMesh.h"
-#include "WebGPUContext.h"
+#include "render/RenderMesh.h"
 
-#include <cstring> // std::strlen
+#if FE_WEBGPU
+  #include "render/WebGPUContext.h"
+#endif
 
-namespace render {
+namespace render
+{
 
-static inline WGPUStringView sv(const char* s) {
-  WGPUStringView v;
-  v.data = s;
-  v.length = static_cast<size_t>(std::strlen(s));
-  return v;
-}
-
-void RenderMesh::Release() {
-  if (vbo) { wgpuBufferRelease(vbo); vbo = nullptr; }
-  if (ibo) { wgpuBufferRelease(ibo); ibo = nullptr; }
-  indexCount        = 0;
-  indexFormat       = WGPUIndexFormat_Undefined;
-  topology          = WGPUPrimitiveTopology_TriangleList;
-  vertexStrideBytes = 0;
-}
-
-void RenderMesh::UploadCPU(const MeshData& d) {
-  auto& ctx   = WebGPUContext::Get();
-  WGPUDevice dev = ctx.GetDevice();
-  WGPUQueue  que = ctx.GetQueue();
-
-  // Decide index format based on data range.
-  bool fitsU16 = true;
-  for (uint32_t idx : d.indices) {
-    if (idx > 0xFFFFu) { fitsU16 = false; break; }
-  }
-  indexFormat = fitsU16 ? WGPUIndexFormat_Uint16 : WGPUIndexFormat_Uint32;
-
-  // Create / resize VBO
+void RenderMesh::Release()
+{
+#if FE_WEBGPU
+  if (vbo)
   {
-    if (vbo) { wgpuBufferRelease(vbo); vbo = nullptr; }
+    wgpuBufferDestroy(vbo);
+    wgpuBufferRelease(vbo);
+    vbo = nullptr;
+  }
+  if (ibo)
+  {
+    wgpuBufferDestroy(ibo);
+    wgpuBufferRelease(ibo);
+    ibo = nullptr;
+  }
+#endif
+
+  indexCount       = 0;
+  vertexBufferSize = 0;
+  indexBufferSize  = 0;
+}
+
+void RenderMesh::UploadCPU(const MeshData& data)
+{
+  // Drop any previous GPU buffers
+  Release();
+
+#if FE_WEBGPU
+  auto& ctx = WebGPUContext::Get();
+  if (!ctx.Device() || !ctx.Queue())
+  {
+    // WebGPU not ready yet – quietly skip upload.
+    return;
+  }
+
+  // --- Vertex buffer ---
+  if (!data.positions.empty())
+  {
+    vertexBufferSize = static_cast<std::uint64_t>(data.positions.size() * sizeof(float));
 
     WGPUBufferDescriptor vb{};
-    vb.nextInChain      = nullptr;
-    vb.label            = sv("mesh_vbo");
-    vb.usage            = WGPUBufferUsage_CopyDst | WGPUBufferUsage_Vertex;
-    vb.size             = static_cast<uint64_t>(d.positions.size() * sizeof(float));
-    vb.mappedAtCreation = false;
+    vb.usage           = WGPUBufferUsage_Vertex | WGPUBufferUsage_CopyDst;
+    vb.size            = vertexBufferSize;
+    vb.mappedAtCreation = false;   // we upload via QueueWriteBuffer
 
-    vbo = wgpuDeviceCreateBuffer(dev, &vb);
-    if (vb.size && !d.positions.empty()) {
-      wgpuQueueWriteBuffer(que, vbo, 0, d.positions.data(), static_cast<size_t>(vb.size));
+    vbo = wgpuDeviceCreateBuffer(ctx.Device(), &vb);
+    if (vbo)
+    {
+      wgpuQueueWriteBuffer(ctx.Queue(), vbo, 0, data.positions.data(), vertexBufferSize);
     }
   }
 
-  // Create / resize IBO
+  // --- Index buffer ---
+  if (!data.indices.empty())
   {
-    if (ibo) { wgpuBufferRelease(ibo); ibo = nullptr; }
+    indexBufferSize = static_cast<std::uint64_t>(data.indices.size() * sizeof(std::uint16_t));
 
-    const uint64_t elemSize = (indexFormat == WGPUIndexFormat_Uint16) ? 2u : 4u;
     WGPUBufferDescriptor ib{};
-    ib.nextInChain      = nullptr;
-    ib.label            = sv("mesh_ibo");
-    ib.usage            = WGPUBufferUsage_CopyDst | WGPUBufferUsage_Index;
-    ib.size             = static_cast<uint64_t>(d.indices.size()) * elemSize;
+    ib.usage           = WGPUBufferUsage_Index | WGPUBufferUsage_CopyDst;
+    ib.size            = indexBufferSize;
     ib.mappedAtCreation = false;
 
-    ibo = wgpuDeviceCreateBuffer(dev, &ib);
-    if (ib.size && !d.indices.empty()) {
-      if (indexFormat == WGPUIndexFormat_Uint16) {
-        // down-convert to u16 as needed
-        std::vector<uint16_t> tmp; tmp.reserve(d.indices.size());
-        for (uint32_t idx : d.indices) tmp.push_back(static_cast<uint16_t>(idx));
-        wgpuQueueWriteBuffer(que, ibo, 0, tmp.data(), static_cast<size_t>(ib.size));
-      } else {
-        wgpuQueueWriteBuffer(que, ibo, 0, d.indices.data(), static_cast<size_t>(ib.size));
-      }
+    ibo = wgpuDeviceCreateBuffer(ctx.Device(), &ib);
+    if (ibo)
+    {
+      wgpuQueueWriteBuffer(ctx.Queue(), ibo, 0, data.indices.data(), indexBufferSize);
     }
-  }
 
-  vertexStrideBytes = d.strideFloats * sizeof(float);
-  indexCount        = static_cast<uint32_t>(d.indices.size());
-  topology          = WGPUPrimitiveTopology_TriangleList;
+    indexCount  = static_cast<std::uint32_t>(data.indices.size());
+    indexFormat = data.indexFormat;
+    topology    = data.topology;
+  }
+#else
+  (void)data; // avoid unused warnings on native builds
+#endif
 }
 
-void RenderMesh::Bind(WGPURenderPassEncoder pass) const {
-  // Bind vertex + index buffers
-  wgpuRenderPassEncoderSetVertexBuffer(
-    pass, /*slot*/ 0, vbo, /*offset*/ 0, WGPU_WHOLE_SIZE);
-  wgpuRenderPassEncoderSetIndexBuffer(
-    pass, ibo, indexFormat, /*offset*/ 0, WGPU_WHOLE_SIZE);
+void RenderMesh::Bind(WGPURenderPassEncoder pass) const
+{
+#if FE_WEBGPU
+  if (!pass || !vbo || !ibo || indexCount == 0)
+    return;
 
-  // The pipeline uses this info (topology/indexFormat) via pipeline state;
-  // we only bind buffers here. Draw call happens in Engine/Scene code.
+  // Bind vertex/index buffers and draw.
+  wgpuRenderPassEncoderSetVertexBuffer(
+      pass,
+      0,              // slot
+      vbo,
+      0,              // offset
+      vertexBufferSize);
+
+  wgpuRenderPassEncoderSetIndexBuffer(
+      pass,
+      ibo,
+      indexFormat,
+      0,              // offset
+      indexBufferSize);
+
+  wgpuRenderPassEncoderDrawIndexed(
+      pass,
+      indexCount,
+      1,              // instanceCount
+      0,              // firstIndex
+      0,              // baseVertex
+      0);             // firstInstance
+#else
+  (void)pass;
+#endif
 }
 
 } // namespace render
