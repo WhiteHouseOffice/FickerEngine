@@ -1,19 +1,28 @@
 #pragma once
 
-#include "math/MiniMath.h"
+#include "math/MiniMath.h"  // Vec3, Mat4, lookAt, perspective
 
-// Simple “game world” driver:
-// - Holds camera position & orientation
-// - Gets updated every frame by Engine
 class Game {
 public:
-  // Called every frame from Engine with delta time in seconds
+  // Initialise camera etc.
+  void init();
+
+  // Per-frame update with delta time in seconds
   void update(float dt);
 
-  // Camera position in world space
-  Vec3 camPos { 0.0f, 2.0f, 5.0f };
+  // Camera matrices
+  Mat4 view() const;
+  Mat4 proj(float aspect) const;
 
-  // Yaw (around Y axis) and pitch (look up/down), in radians.
-  float yaw   = 0.0f;
-  float pitch = 0.0f;
+  // For debugging / other systems
+  Vec3 cameraPos() const { return camPos; }
+
+private:
+  Vec3  camPos{0.f, 2.f, 5.f};
+  float yaw   = 0.f;   // radians, rotation around Y
+  float pitch = 0.f;   // radians, up/down
+
+  float moveSpeed        = 5.f;      // units per second
+  float mouseSensitivity = 0.0025f;  // not used yet, but nice to keep
+  float logTimer         = 0.f;      // for periodic logging
 };
