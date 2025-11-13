@@ -22,11 +22,11 @@ struct MeshData
   std::vector<std::uint16_t> indices;     // 16-bit indices are enough for now
 
 #if FE_WEBGPU
-  WGPUIndexFormat         indexFormat = WGPUIndexFormat_Uint16;
-  WGPUPrimitiveTopology   topology    = WGPUPrimitiveTopology_TriangleList;
+  WGPUIndexFormat       indexFormat = WGPUIndexFormat_Uint16;
+  WGPUPrimitiveTopology topology    = WGPUPrimitiveTopology_TriangleList;
 #else
-  WGPUIndexFormat         indexFormat = 0;
-  WGPUPrimitiveTopology   topology    = 0;
+  WGPUIndexFormat       indexFormat = 0;
+  WGPUPrimitiveTopology topology    = 0;
 #endif
 };
 
@@ -54,11 +54,11 @@ private:
   void*      ibo = nullptr;
 #endif
 
-  std::uint32_t       indexCount       = 0;
-  std::uint64_t       vertexBufferSize = 0;
-  std::uint64_t       indexBufferSize  = 0;
-  WGPUIndexFormat     indexFormat      = 0;
-  WGPUPrimitiveTopology topology       = 0;
+  std::uint32_t         indexCount       = 0;
+  std::uint64_t         vertexBufferSize = 0;
+  std::uint64_t         indexBufferSize  = 0;
+  WGPUIndexFormat       indexFormat;     // no default initializer (set in UploadCPU)
+  WGPUPrimitiveTopology topology;        // no default initializer (set in UploadCPU)
 };
 
 } // namespace render
