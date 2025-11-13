@@ -1,5 +1,6 @@
 #include "core/Engine.h"
 #include "render/WebGPUContext.h"
+#include <stdio.h>
 
 using render::WebGPUContext;
 
@@ -38,6 +39,9 @@ void Engine::shutdown() {
 }
 
 void Engine::stepOnce() {
+  static int frame = 0;
+    ++frame;
+    printf("[FickerEngine] frame %d\n", frame);
   update();
   render();
 }
