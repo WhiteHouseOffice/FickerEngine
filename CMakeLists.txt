@@ -59,7 +59,7 @@ if (EMSCRIPTEN OR BUILD_WEB)
     "-sEXPORTED_FUNCTIONS=['_main','_malloc','_free']"
 
     # Optional: supply a small JS helper (defined below as runtime/pre.js)
-    "--pre-js=${CMAKE_SOURCE_DIR}/runtime/pre.js"
+    #"--pre-js=${CMAKE_SOURCE_DIR}/runtime/pre.js"
 
     # If you want a totally custom shell, uncomment and provide the file:
     # "--shell-file=${CMAKE_SOURCE_DIR}/web/shell.html"
