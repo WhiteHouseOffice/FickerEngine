@@ -1,16 +1,19 @@
 #pragma once
+
 #include "math/MiniMath.h"
 
+// Simple “game world” driver:
+// - Holds camera position & orientation
+// - Gets updated every frame by Engine
 class Game {
 public:
-    void Init();
-    void Update(float dt);
-    Mat4 View() const;
+  // Called every frame from Engine with delta time in seconds
+  void update(float dt);
 
-private:
-    Vec3  camPos { 0.f, 2.f, 5.f };
-    float yaw    = 0.0f;
-    float pitch  = 0.0f;
-    float moveSpeed = 5.0f;
-    float logTimer  = 0.0f;
+  // Camera position in world space
+  Vec3 camPos { 0.0f, 2.0f, 5.0f };
+
+  // Yaw (around Y axis) and pitch (look up/down), in radians.
+  float yaw   = 0.0f;
+  float pitch = 0.0f;
 };
