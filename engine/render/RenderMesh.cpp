@@ -7,13 +7,12 @@ void RenderMesh::clear() {
   indices.clear();
 }
 
-void RenderMesh::uploadGrid(const geom::GridPlane& grid) {
-  // GridPlane is pure CPU geom; just mirror its buffers
+void RenderMesh::uploadGrid(const GridPlane& grid) {
   positions = grid.positions;
   indices   = grid.indices;
 }
 
-void RenderMesh::uploadMarker(const geom::MarkerCross& marker) {
+void RenderMesh::uploadMarker(const MarkerCross& marker) {
   positions = marker.positions;
   indices   = marker.indices;
 }
