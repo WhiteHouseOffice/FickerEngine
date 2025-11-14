@@ -2,9 +2,8 @@
 #include <vector>
 #include <cstdint>
 
-// Geometry types are defined in engine/geom/*.h in the global namespace.
-struct GridPlane;
-struct MarkerCross;
+#include "geom/GridPlane.h"
+#include "geom/MarkerCross.h"
 
 namespace render {
 
@@ -16,8 +15,8 @@ public:
 
   void clear();
 
-  void uploadGrid(const GridPlane& grid);
-  void uploadMarker(const MarkerCross& marker);
+  void uploadGrid(const geom::GridPlane& grid);
+  void uploadMarker(const geom::MarkerCross& marker);
 };
 
 } // namespace render
