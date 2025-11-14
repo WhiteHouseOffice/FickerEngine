@@ -1,4 +1,6 @@
 #include "render/RenderMesh.h"
+#include "geom/GridPlane.h"
+#include "geom/MarkerCross.h"
 
 using namespace render;
 
