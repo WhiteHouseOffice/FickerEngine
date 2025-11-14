@@ -1,47 +1,44 @@
 #include "core/Engine.h"
+#include "core/Time.h"
 #include "render/WebGPUContext.h"
-#include <stdio.h>
 
-using render::WebGPUContext;
-
+// Singleton instance
 Engine& Engine::instance() {
-  static Engine s;
-  return s;
+  static Engine inst;
+  return inst;
 }
+
+Engine::Engine()  = default;
+Engine::~Engine() = default;
 
 void Engine::init() {
-  // Bring up WebGPU (context methods are currently stubs; that’s fine)
-  WebGPUContext::Get().Init();
-  WebGPUContext::Get().Configure(1280, 720);
-}
+  // Time system
+  Time::init();
 
-void Engine::update() {
-  // Game / scene update would go here (kept empty to avoid extra deps)
-}
+  // Stubbed WebGPU context (no real GPU calls yet)
+  auto& ctx = render::WebGPUContext::Get();
+  ctx.init();
+  ctx.configure(1280, 720);
 
-void Engine::render() {
-  auto& ctx = WebGPUContext::Get();
-
-  // If Init() is still a stub (device/queue null), skip rendering safely.
-  if (!ctx.Device() || !ctx.Queue()) return;
-
-  // Acquire backbuffer (stub returns nullptr for now; still safe)
-  WGPUTextureView backbuffer = ctx.BeginFrame();
-
-  // TODO: when your pipeline is ready, encode a pass and draw here.
-
-  // Present
-  ctx.EndFrame(backbuffer);
-}
-
-void Engine::shutdown() {
-  // Add explicit releases once WebGPUContext tracks resources
+  // Game / camera
+  game.init();
 }
 
 void Engine::stepOnce() {
-  static int frame = 0;
-    ++frame;
-    printf("[FickerEngine] frame %d\n", frame);
-  update();
-  render();
+  // Update timing
+  Time::update();
+  float dt = Time::deltaTime();
+
+  // Update game logic (camera movement, etc.)
+  game.update(dt);
+
+  // Frame hooks (currently no real rendering)
+  auto& ctx = render::WebGPUContext::Get();
+  if (!ctx.isReady()) {
+    return;
+  }
+
+  ctx.beginFrame();
+  // TODO: once we have a real renderer, use game.view() here
+  ctx.endFrame();
 }

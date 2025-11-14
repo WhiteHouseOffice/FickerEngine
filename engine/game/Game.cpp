@@ -1,55 +1,43 @@
 #include "game/Game.h"
-
-// Prefer the authoritative Input in engine/core/, but fall back if needed.
-#if __has_include("core/Input.h")
-  #include "core/Input.h"
-#elif __has_include("input/Input.h")
-  #include "input/Input.h"
-#else
-  // Minimal stub so it still compiles if Input isn’t present in CI.
-  namespace Input {
-    enum Key { KEY_W, KEY_A, KEY_S, KEY_D, KEY_SHIFT, KEY_SPACE, KEY_CTRL };
-    inline bool isKeyDown(Key){ return false; }
-  }
-#endif
-
+#include "core/Input.h"
 #include <cstdio>
-#include <cmath>
 
-void Game::Init() {
-    camPos = { 0.f, 2.f, 5.f };
-    yaw = 0.0f;
+void Game::init() {
+  camPos     = { 0.0f, 2.0f, 5.0f };
+  camForward = { 0.0f, 0.0f, -1.0f };
+  moveSpeed  = 4.0f;
+  logTimer   = 0.0f;
 }
 
-void Game::Update(float dt) {
-    float speed = moveSpeed * (Input::isKeyDown(Input::KEY_SHIFT) ? 2.0f : 1.0f);
+void Game::update(float dt) {
+  // Flatten forward on XZ plane
+  Vec3 fwd = camForward;
+  fwd.y    = 0.0f;
+  fwd      = normalize(fwd);
 
-    const float cy = std::cos(yaw), sy = std::sin(yaw);
-    const Vec3 fwd   {  sy, 0.f, -cy };
-    const Vec3 right {  cy, 0.f,  sy };
+  Vec3 right = normalize(cross(fwd, Vec3{0.0f, 1.0f, 0.0f}));
 
-    Vec3 delta {0,0,0};
-    if (Input::isKeyDown(Input::KEY_W)) delta += fwd   * speed * dt;
-    if (Input::isKeyDown(Input::KEY_S)) delta -= fwd   * speed * dt;
-    if (Input::isKeyDown(Input::KEY_D)) delta += right * speed * dt;
-    if (Input::isKeyDown(Input::KEY_A)) delta -= right * speed * dt;
+  Vec3 delta{0.0f, 0.0f, 0.0f};
+  float speed = moveSpeed * (Input::isKeyDown(Input::KEY_SHIFT) ? 2.0f : 1.0f);
 
-    if (Input::isKeyDown(Input::KEY_SPACE)) delta.y += speed * dt;
-    if (Input::isKeyDown(Input::KEY_CTRL))  delta.y -= speed * dt;
+  if (Input::isKeyDown(Input::KEY_W)) delta += fwd   * speed * dt;
+  if (Input::isKeyDown(Input::KEY_S)) delta -= fwd   * speed * dt;
+  if (Input::isKeyDown(Input::KEY_D)) delta += right * speed * dt;
+  if (Input::isKeyDown(Input::KEY_A)) delta -= right * speed * dt;
 
-    camPos += delta;
+  camPos += delta;
 
-    logTimer += dt;
-    if (logTimer >= 0.25f) {
-        logTimer = 0.f;
-        std::printf("[pos] x=%.2f y=%.2f z=%.2f\n", camPos.x, camPos.y, camPos.z);
-        std::fflush(stdout);
-    }
+  // Periodically log camera coordinates
+  logTimer += dt;
+  if (logTimer >= 0.25f) {
+    logTimer = 0.0f;
+    std::printf("[Game] Camera position: (%.2f, %.2f, %.2f)\n",
+                camPos.x, camPos.y, camPos.z);
+  }
 }
 
-Mat4 Game::View() const {
-    const float cy = std::cos(yaw), sy = std::sin(yaw);
-    const Vec3 fwd { sy, 0.f, -cy };
-    const Vec3 target = camPos + fwd;
-    return lookAt(camPos, target, Vec3{0,1,0});
+Mat4 Game::view() const {
+  Vec3 up{0.0f, 1.0f, 0.0f};
+  Vec3 target = camPos + camForward;
+  return lookAt(camPos, target, up);
 }
