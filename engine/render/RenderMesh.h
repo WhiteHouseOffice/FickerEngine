@@ -18,8 +18,9 @@ public:
   RenderMesh() = default;
   ~RenderMesh() = default;
 
-  void uploadGrid(const geom::GridPlane& plane);
-  void uploadMarker(const geom::MarkerCross& marker);
+  // Upload from CPU geometry generators
+  void uploadGrid(const GridPlane& plane);
+  void uploadMarker(const MarkerCross& marker);
 
   // GPU-related hooks – currently no-op in the stub backend
   void release();

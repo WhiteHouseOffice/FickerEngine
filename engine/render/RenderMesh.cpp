@@ -2,12 +2,12 @@
 
 namespace render {
 
-void RenderMesh::uploadGrid(const geom::GridPlane& plane) {
+void RenderMesh::uploadGrid(const GridPlane& plane) {
   mesh.positions = plane.positions;
   mesh.indices   = plane.indices;
 }
 
-void RenderMesh::uploadMarker(const geom::MarkerCross& marker) {
+void RenderMesh::uploadMarker(const MarkerCross& marker) {
   mesh.positions = marker.positions;
   mesh.indices   = marker.indices;
 }
