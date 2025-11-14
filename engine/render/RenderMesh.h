@@ -1,33 +1,25 @@
 #pragma once
 
 #include <vector>
-#include "math/MiniMath.h"
-#include "geom/GridPlane.h"
-#include "geom/MarkerCross.h"
+
+namespace geom {
+  struct GridPlane;
+  struct MarkerCross;
+}
 
 namespace render {
 
-// Pure CPU mesh data: positions + indices
-struct MeshData {
-  std::vector<Vec3>        positions;
-  std::vector<std::uint32_t> indices;
-};
-
 class RenderMesh {
 public:
-  RenderMesh() = default;
+  // 3 floats per vertex: x, y, z
+  std::vector<float>    positions;
+  std::vector<unsigned> indices;
 
-  // Upload purely to CPU-side storage for now (no real GPU)
-  void uploadCPU(const MeshData& src);
+  // Upload from CPU geom types
+  void uploadGrid(const geom::GridPlane& grid);
+  void uploadMarker(const geom::MarkerCross& marker);
 
-  const MeshData& data() const { return mesh; }
-
-private:
-  MeshData mesh;
+  void clear();
 };
-
-// Helpers to convert from geometry data to mesh:
-MeshData MakeMesh(const geom::GridData& grid);
-MeshData MakeMesh(const geom::LinesData& lines);
 
 } // namespace render

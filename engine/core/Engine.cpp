@@ -18,7 +18,7 @@ void Engine::init() {
   std::puts("[Engine] init");
   Time::init();
 
-  // Stubbed WebGPU context for now
+  // Stubbed WebGPU context for now (no real GPU calls yet)
   WebGPUContext::Get().init();
   WebGPUContext::Get().configure(1280, 720);
 
@@ -26,7 +26,8 @@ void Engine::init() {
   game  = std::make_unique<Game>();
 
   game->init();
-  scene->buildDefaultScene(); // adjust/remove if your Scene API differs
+  // For now we don’t assume anything about Scene’s API.
+  // If Scene has its own init/build function, we’ll hook it up later.
 }
 
 void Engine::update() {
@@ -37,9 +38,8 @@ void Engine::update() {
     game->update(dt);
   }
 
-  if (scene) {
-    scene->update(dt);
-  }
+  // Scene update is left to Scene itself / future API.
+  // if (scene) { scene->update(dt); }
 }
 
 void Engine::render() {

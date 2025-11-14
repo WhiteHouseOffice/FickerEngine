@@ -1,23 +1,23 @@
 #include "render/RenderMesh.h"
 
+#include "geom/GridPlane.h"
+#include "geom/MarkerCross.h"
+
 namespace render {
 
-void RenderMesh::uploadCPU(const MeshData& src) {
-  mesh = src;
+void RenderMesh::uploadGrid(const geom::GridPlane& grid) {
+  positions = grid.positions;
+  indices   = grid.indices;
 }
 
-MeshData MakeMesh(const geom::GridData& grid) {
-  MeshData out;
-  out.positions = grid.positions;
-  out.indices   = grid.indices;
-  return out;
+void RenderMesh::uploadMarker(const geom::MarkerCross& marker) {
+  positions = marker.positions;
+  indices   = marker.indices;
 }
 
-MeshData MakeMesh(const geom::LinesData& lines) {
-  MeshData out;
-  out.positions = lines.positions;
-  out.indices   = lines.indices;
-  return out;
+void RenderMesh::clear() {
+  positions.clear();
+  indices.clear();
 }
 
 } // namespace render
