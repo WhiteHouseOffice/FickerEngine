@@ -1,21 +1,17 @@
 #pragma once
 
 #include <vector>
-
-namespace geom {
-  struct GridPlane;
-  struct MarkerCross;
-}
+#include "geom/GridPlane.h"
+#include "geom/MarkerCross.h"
 
 namespace render {
 
 class RenderMesh {
 public:
-  // 3 floats per vertex: x, y, z
+  // CPU-side mesh data (3 floats per vertex: x,y,z)
   std::vector<float>    positions;
   std::vector<unsigned> indices;
 
-  // Upload from CPU geom types
   void uploadGrid(const geom::GridPlane& grid);
   void uploadMarker(const geom::MarkerCross& marker);
 

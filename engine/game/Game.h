@@ -6,15 +6,12 @@ class Game {
 public:
   void init();
   void update(float dt);
-
-  // Camera view matrix
   Mat4 view() const;
 
-  const Vec3& cameraPosition() const { return camPos; }
+  const Vec3& cameraPosition() const { return cameraPos; }
 
 private:
-  Vec3  camPos     { 0.0f, 2.0f, 5.0f };
-  Vec3  camForward { 0.0f, 0.0f, -1.0f };
-  float moveSpeed  = 4.0f;
-  float logTimer   = 0.0f;
+  Vec3  cameraPos{0.0f, 1.5f, 5.0f};
+  float yaw       = 0.0f;   // radians
+  float moveSpeed = 4.0f;   // units per second
 };

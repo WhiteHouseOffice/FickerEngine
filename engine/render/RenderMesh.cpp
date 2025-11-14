@@ -1,8 +1,5 @@
 #include "render/RenderMesh.h"
 
-#include "geom/GridPlane.h"
-#include "geom/MarkerCross.h"
-
 namespace render {
 
 void RenderMesh::uploadGrid(const geom::GridPlane& grid) {
