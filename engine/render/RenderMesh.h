@@ -3,11 +3,9 @@
 #include <vector>
 #include "math/MiniMath.h"
 
-// Forward declarations of geometry types
-namespace geom {
-struct GridPlane;
-struct MarkerCross;
-} // namespace geom
+// Pull in full geometry types
+#include "geom/GridPlane.h"
+#include "geom/MarkerCross.h"
 
 namespace render {
 
