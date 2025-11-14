@@ -1,24 +1,33 @@
 #pragma once
 
-#include "game/Game.h"
+#include <memory>
+
+class Scene;
+class Game;
 
 class Engine {
 public:
-  // Global singleton instance
+  // Singleton access used from runtime/main.cpp
   static Engine& instance();
 
-  // Called once from main/runtime
-  void init();
-
-  // Called once per frame from the main loop
+  // Called each frame from the platform layer (emscripten main loop)
   void stepOnce();
 
 private:
-  Engine();
-  ~Engine();
+  Engine()  = default;
+  ~Engine() = default;
 
-  Engine(const Engine&) = delete;
+  Engine(const Engine&)            = delete;
   Engine& operator=(const Engine&) = delete;
 
-  Game game;
+  // Internal lifecycle
+  void init();
+  void update();
+  void render();
+  void shutdown();
+
+  bool initialized = false;
+
+  std::unique_ptr<Scene> scene;
+  std::unique_ptr<Game>  game;
 };
