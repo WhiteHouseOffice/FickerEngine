@@ -2,21 +2,23 @@
 #include <vector>
 #include <cstdint>
 
-struct GridPlane;
-struct MarkerCross;
+namespace geom {
+  struct GridPlane;
+  struct MarkerCross;
+}
 
 namespace render {
 
 class RenderMesh {
 public:
-  // CPU-side data only for now
+  // CPU-only mesh data for now
   std::vector<float>         positions;
   std::vector<std::uint32_t> indices;
 
   void clear();
 
-  void uploadGrid(const GridPlane& grid);
-  void uploadMarker(const MarkerCross& marker);
+  void uploadGrid(const geom::GridPlane& grid);
+  void uploadMarker(const geom::MarkerCross& marker);
 };
 
 } // namespace render
