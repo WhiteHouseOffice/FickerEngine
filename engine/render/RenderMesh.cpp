@@ -1,13 +1,15 @@
 #include "render/RenderMesh.h"
+#include "geom/GridPlane.h"
+#include "geom/MarkerCross.h"
 
 namespace render {
 
-void RenderMesh::uploadGrid(const GridPlane& plane) {
+void RenderMesh::uploadGrid(const geom::GridPlane& plane) {
   mesh.positions = plane.positions;
   mesh.indices   = plane.indices;
 }
 
-void RenderMesh::uploadMarker(const MarkerCross& marker) {
+void RenderMesh::uploadMarker(const geom::MarkerCross& marker) {
   mesh.positions = marker.positions;
   mesh.indices   = marker.indices;
 }

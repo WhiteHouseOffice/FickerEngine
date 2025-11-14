@@ -2,8 +2,12 @@
 
 #include <vector>
 #include "math/MiniMath.h"
-#include "geom/GridPlane.h"
-#include "geom/MarkerCross.h"
+
+// Forward declarations of geometry types
+namespace geom {
+struct GridPlane;
+struct MarkerCross;
+} // namespace geom
 
 namespace render {
 
@@ -19,8 +23,8 @@ public:
   ~RenderMesh() = default;
 
   // Upload from CPU geometry generators
-  void uploadGrid(const GridPlane& plane);
-  void uploadMarker(const MarkerCross& marker);
+  void uploadGrid(const geom::GridPlane& plane);
+  void uploadMarker(const geom::MarkerCross& marker);
 
   // GPU-related hooks – currently no-op in the stub backend
   void release();
