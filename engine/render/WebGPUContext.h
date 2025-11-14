@@ -4,36 +4,27 @@
 
 namespace render {
 
-// Stubbed WebGPU context so we don't depend on emscripten/webgpu.h yet.
+// Placeholder type so Engine can compile without real WebGPU:
+using WGPUTextureView = void*;
+
 class WebGPUContext {
 public:
   static WebGPUContext& Get();
 
-  // Called once during Engine::init()
-  void init();
-
-  // Called once after init – lets us remember a nominal size
+  // Simple lifecycle – all stubbed for now
+  void init();                       // called once from Engine
   void configure(int width, int height);
-
-  // Optional resize hook
-  void resize(int width, int height);
-
-  // Frame boundaries – currently no-op
-  void beginFrame();
-  void endFrame();
-
   bool isReady() const { return initialized; }
 
+  WGPUTextureView acquireSwapchainView();
+  void present(WGPUTextureView view);
+
+  void resize(int width, int height);
+
 private:
-  WebGPUContext()  = default;
-  ~WebGPUContext() = default;
-
-  WebGPUContext(const WebGPUContext&) = delete;
-  WebGPUContext& operator=(const WebGPUContext&) = delete;
-
   bool initialized = false;
-  int  width       = 0;
-  int  height      = 0;
+  int  width  = 0;
+  int  height = 0;
 };
 
 } // namespace render

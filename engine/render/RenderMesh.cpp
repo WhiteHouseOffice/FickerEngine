@@ -2,23 +2,22 @@
 
 namespace render {
 
-void RenderMesh::uploadGrid(const geom::GridPlane& plane) {
-  mesh.positions = plane.positions;
-  mesh.indices   = plane.indices;
+void RenderMesh::uploadCPU(const MeshData& src) {
+  mesh = src;
 }
 
-void RenderMesh::uploadMarker(const geom::MarkerCross& marker) {
-  mesh.positions = marker.positions;
-  mesh.indices   = marker.indices;
+MeshData MakeMesh(const geom::GridData& grid) {
+  MeshData out;
+  out.positions = grid.positions;
+  out.indices   = grid.indices;
+  return out;
 }
 
-void RenderMesh::release() {
-  mesh.positions.clear();
-  mesh.indices.clear();
-}
-
-void RenderMesh::bind() const {
-  // Stub – no real GPU binding yet.
+MeshData MakeMesh(const geom::LinesData& lines) {
+  MeshData out;
+  out.positions = lines.positions;
+  out.indices   = lines.indices;
+  return out;
 }
 
 } // namespace render

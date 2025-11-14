@@ -4,35 +4,36 @@
 namespace render {
 
 WebGPUContext& WebGPUContext::Get() {
-  static WebGPUContext inst;
-  return inst;
+  static WebGPUContext s_ctx;
+  return s_ctx;
 }
 
 void WebGPUContext::init() {
-  if (initialized) {
-    return;
-  }
+  if (initialized) return;
+  std::puts("[WebGPUContext] init (stub)");
   initialized = true;
-  std::printf("[WebGPUContext] stub init (no real GPU yet)\n");
 }
 
 void WebGPUContext::configure(int w, int h) {
   width  = w;
   height = h;
-  std::printf("[WebGPUContext] stub configure %dx%d\n", w, h);
+  std::printf("[WebGPUContext] configure %dx%d (stub)\n", w, h);
+}
+
+WGPUTextureView WebGPUContext::acquireSwapchainView() {
+  // In the real backend this would return a real texture view.
+  // For now, nullptr is fine.
+  return nullptr;
+}
+
+void WebGPUContext::present(WGPUTextureView) {
+  // Stub: nothing to do.
 }
 
 void WebGPUContext::resize(int w, int h) {
   width  = w;
   height = h;
-}
-
-void WebGPUContext::beginFrame() {
-  // In a real backend, we'd acquire a swapchain image here
-}
-
-void WebGPUContext::endFrame() {
-  // In a real backend, we'd present here
+  std::printf("[WebGPUContext] resize %dx%d (stub)\n", w, h);
 }
 
 } // namespace render

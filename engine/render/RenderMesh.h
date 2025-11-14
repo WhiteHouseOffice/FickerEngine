@@ -2,36 +2,32 @@
 
 #include <vector>
 #include "math/MiniMath.h"
-
-// Pull in full geometry types
 #include "geom/GridPlane.h"
 #include "geom/MarkerCross.h"
 
 namespace render {
 
-// Pure CPU-side mesh data for now
+// Pure CPU mesh data: positions + indices
 struct MeshData {
-  std::vector<Vec3>     positions;
-  std::vector<uint32_t> indices;
+  std::vector<Vec3>        positions;
+  std::vector<std::uint32_t> indices;
 };
 
 class RenderMesh {
 public:
   RenderMesh() = default;
-  ~RenderMesh() = default;
 
-  // Upload from CPU geometry generators
-  void uploadGrid(const geom::GridPlane& plane);
-  void uploadMarker(const geom::MarkerCross& marker);
-
-  // GPU-related hooks – currently no-op in the stub backend
-  void release();
-  void bind() const;
+  // Upload purely to CPU-side storage for now (no real GPU)
+  void uploadCPU(const MeshData& src);
 
   const MeshData& data() const { return mesh; }
 
 private:
   MeshData mesh;
 };
+
+// Helpers to convert from geometry data to mesh:
+MeshData MakeMesh(const geom::GridData& grid);
+MeshData MakeMesh(const geom::LinesData& lines);
 
 } // namespace render
