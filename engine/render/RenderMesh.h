@@ -6,11 +6,11 @@
 
 namespace render {
 
+// CPU-only mesh container for now: positions as flat float array, plus indices.
 class RenderMesh {
 public:
-  // CPU-side mesh data (3 floats per vertex: x,y,z)
-  std::vector<float>    positions;
-  std::vector<unsigned> indices;
+  std::vector<float>     positions;
+  std::vector<unsigned>  indices;
 
   void uploadGrid(const geom::GridPlane& grid);
   void uploadMarker(const geom::MarkerCross& marker);
