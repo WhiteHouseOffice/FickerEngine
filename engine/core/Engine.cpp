@@ -61,7 +61,14 @@ void Engine::render() {
   //  - walk Scene, upload objects
   //  - forward to WebGPU/WebGL backend
 }
+void Engine::stepOnce() {
+  if (!initialized) {
+    return;
+  }
 
+  update();
+  render();
+}
 
 void Engine::shutdown() {
   if (!initialized) return;
