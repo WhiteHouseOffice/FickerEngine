@@ -54,7 +54,7 @@ if (EMSCRIPTEN)
     #  -sALLOW_MEMORY_GROWTH : nicer while debugging
     #  -sASSERTIONS       : runtime checks in debug builds
     target_link_options(FickerEngine PRIVATE
-        "-sUSE_WEBGPU"
+        #"-sUSE_WEBGPU"
         "-sASYNCIFY"
         "-sALLOW_MEMORY_GROWTH=1"
         "-sASSERTIONS=1"

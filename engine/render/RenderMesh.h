@@ -7,8 +7,7 @@
 #include "geom/GridPlane.h"
 #include "geom/MarkerCross.h"
 
-// CPU-only render mesh for now.
-// Just holds positions + indices; later we'll feed this to WebGPU/WebGL.
+// CPU-only render mesh for now (no GPU buffers yet).
 class RenderMesh {
 public:
   std::vector<Vec3>     positions;
@@ -16,7 +15,7 @@ public:
 
   void clear();
 
-  // Upload pure CPU geometry into this mesh
+  // Fill from CPU geometry
   void uploadGrid(const geom::GridPlane& grid);
   void uploadMarker(const geom::MarkerCross& marker);
 };
