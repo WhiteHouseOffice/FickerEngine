@@ -3,17 +3,18 @@
 namespace Input {
 
 enum Key {
-  KEY_W,
+  KEY_W = 0,
   KEY_A,
   KEY_S,
   KEY_D,
-  KEY_SHIFT
+  KEY_SHIFT,
+  KEY_COUNT
 };
 
-// TODO: hook this up to real browser key events.
-// For now, always return false so the game compiles and runs.
-inline bool isKeyDown(Key) {
-  return false;
-}
+// Call once at startup to hook into keyboard events (on web builds).
+void init();
+
+// Query current key state.
+bool isKeyDown(Key key);
 
 } // namespace Input

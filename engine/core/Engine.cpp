@@ -1,10 +1,12 @@
 #include <cstdio>
 
+#include "core/Engine.h"
+#include "core/Time.h"
+#include "core/Input.h"
 #include "game/Game.h"
 #include "game/Scene.h"
-#include "core/Time.h"
-#include "core/Engine.h"
-#include "math/MiniMath.h"  // Mat4, perspective()
+#include "render/WebGPUContext.h"
+#include "math/MiniMath.h" // Mat4, perspective()
 
 Engine& Engine::instance() {
   static Engine s_instance;
@@ -14,6 +16,12 @@ Engine& Engine::instance() {
 void Engine::init() {
   if (initialized) return;
 
+  // Initialize global systems first
+  Time::init();
+  Input::init();
+  render::WebGPUContext::Get().init();  // currently just logs a stub message
+
+  // Create game + scene
   scene = std::make_unique<Scene>();
   game  = std::make_unique<Game>();
 
@@ -26,8 +34,11 @@ void Engine::init() {
 void Engine::update() {
   if (!initialized) return;
 
+  // Advance timing
+  Time::update();
   const float dt = Time::deltaTime();
 
+  // Advance game + scene
   if (game)  game->update(dt);
   if (scene) scene->update(dt);
 }
@@ -36,7 +47,7 @@ void Engine::render() {
   if (!initialized) return;
 
   // Build a simple camera from Game and a fixed projection.
-  Mat4 view = Mat4::identity();
+  Mat4 view{};
   if (game) {
     view = game->view();
   }
