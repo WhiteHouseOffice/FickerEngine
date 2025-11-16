@@ -1,7 +1,3 @@
-#pragma once
-
-#include "math/MiniMath.h"
-
 class Game {
 public:
   void init();
