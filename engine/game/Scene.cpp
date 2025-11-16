@@ -2,7 +2,7 @@
 
 Scene::Scene() {
   // Build CPU geometry once.
-  // Tweak these parameters to taste.
+  // Adjust size/subdivisions if you want a denser grid.
   grid_.build(/*size*/ 10.0f, /*subdivisions*/ 20);
   marker_.build(/*size*/ 0.5f);
 }

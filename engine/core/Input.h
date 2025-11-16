@@ -11,7 +11,7 @@ enum Key {
   KEY_COUNT
 };
 
-// Call once at startup to hook into keyboard events (on web builds).
+// Call once at startup (Engine::init) to hook input.
 void init();
 
 // Query current key state.
