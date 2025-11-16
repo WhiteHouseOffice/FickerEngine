@@ -58,6 +58,7 @@ if (EMSCRIPTEN)
         "-sASYNCIFY"
         "-sALLOW_MEMORY_GROWTH=1"
         "-sASSERTIONS=1"
+        "-sLEGACY_GL_EMULATION=1"
 
         # If you want custom shell / pre.js again, uncomment:
         # "--pre-js=${CMAKE_CURRENT_SOURCE_DIR}/runtime/pre.js"

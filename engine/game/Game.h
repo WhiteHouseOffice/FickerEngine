@@ -10,6 +10,7 @@ public:
 
 private:
   Vec3  camPos{0.f, 2.f, 5.f};
-  float yaw{0.f};
+  float yaw{0.f};   // horizontal rotation in radians
+  float pitch{0.f}; // vertical rotation in radians
   float logTimer{0.f};
 };

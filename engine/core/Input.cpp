@@ -7,10 +7,13 @@
 
 namespace {
   bool g_keys[Input::KEY_COUNT] = {};
+  bool g_mouseButtons[Input::MOUSE_BUTTON_COUNT] = {};
+  float g_mouseDeltaX = 0.0f;
+  float g_mouseDeltaY = 0.0f;
 }
 
 #ifdef __EMSCRIPTEN__
-// Common callback for keydown / keyup
+
 static EM_BOOL key_callback(int eventType,
                             const EmscriptenKeyboardEvent* e,
                             void* /*userData*/) {
@@ -33,14 +36,50 @@ static EM_BOOL key_callback(int eventType,
   setKey("d",     KEY_D);
   setKey("D",     KEY_D);
   setKey("Shift", KEY_SHIFT);
+  setKey(" ",        KEY_SPACE);
+  setKey("Spacebar", KEY_SPACE);
+  setKey("Control",  KEY_CTRL);
 
   return EM_TRUE;
 }
-#endif
+
+static EM_BOOL mousemove_callback(int /*eventType*/,
+                                  const EmscriptenMouseEvent* e,
+                                  void* /*userData*/) {
+  g_mouseDeltaX += static_cast<float>(e->movementX);
+  g_mouseDeltaY += static_cast<float>(e->movementY);
+  return EM_TRUE;
+}
+
+static EM_BOOL mousedown_callback(int /*eventType*/,
+                                  const EmscriptenMouseEvent* e,
+                                  void* /*userData*/) {
+  using namespace Input;
+  if (e->button == 0) g_mouseButtons[MOUSE_LEFT]   = true;
+  if (e->button == 1) g_mouseButtons[MOUSE_MIDDLE] = true;
+  if (e->button == 2) g_mouseButtons[MOUSE_RIGHT]  = true;
+  return EM_TRUE;
+}
+
+static EM_BOOL mouseup_callback(int /*eventType*/,
+                                const EmscriptenMouseEvent* e,
+                                void* /*userData*/) {
+  using namespace Input;
+  if (e->button == 0) g_mouseButtons[MOUSE_LEFT]   = false;
+  if (e->button == 1) g_mouseButtons[MOUSE_MIDDLE] = false;
+  if (e->button == 2) g_mouseButtons[MOUSE_RIGHT]  = false;
+  return EM_TRUE;
+}
+
+#endif // __EMSCRIPTEN__
 
 void Input::init() {
 #ifdef __EMSCRIPTEN__
-  // Listen on the window so we get keys regardless of focus quirks.
+  std::memset(g_keys, 0, sizeof(g_keys));
+  std::memset(g_mouseButtons, 0, sizeof(g_mouseButtons));
+  g_mouseDeltaX = g_mouseDeltaY = 0.0f;
+
+  // Keyboard
   emscripten_set_keydown_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW,
                                   nullptr,
                                   EM_TRUE,
@@ -49,10 +88,36 @@ void Input::init() {
                                 nullptr,
                                 EM_TRUE,
                                 key_callback);
+
+  // Mouse movement + buttons
+  emscripten_set_mousemove_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW,
+                                    nullptr,
+                                    EM_TRUE,
+                                    mousemove_callback);
+  emscripten_set_mousedown_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW,
+                                    nullptr,
+                                    EM_TRUE,
+                                    mousedown_callback);
+  emscripten_set_mouseup_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW,
+                                  nullptr,
+                                  EM_TRUE,
+                                  mouseup_callback);
 #endif
 }
 
 bool Input::isKeyDown(Key key) {
   if (key < 0 || key >= KEY_COUNT) return false;
   return g_keys[key];
+}
+
+bool Input::isMouseButtonDown(MouseButton button) {
+  if (button < 0 || button >= MOUSE_BUTTON_COUNT) return false;
+  return g_mouseButtons[button];
+}
+
+void Input::getMouseDelta(float& dx, float& dy) {
+  dx = g_mouseDeltaX;
+  dy = g_mouseDeltaY;
+  g_mouseDeltaX = 0.0f;
+  g_mouseDeltaY = 0.0f;
 }
