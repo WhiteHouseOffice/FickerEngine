@@ -1,19 +1,22 @@
 #pragma once
 
 #include "math/MiniMath.h"
-#include "render/RenderMesh.h"
 #include "geom/GridPlane.h"
 #include "geom/MarkerCross.h"
+#include "render/RenderMesh.h"
 
+// Very small scene container for now:
+// - owns CPU geom (GridPlane, MarkerCross)
+// - owns CPU RenderMesh wrappers
+// - exposes init/update/render hooks for the Engine
 class Scene {
 public:
+  Scene() = default;  // trivial constructor, no out-of-class definition
+
   void init();
   void update(float dt);
 
-  // Main scene render
   void render(const Mat4& view, const Mat4& proj);
-
-  // Optional debug overlay (unused for now)
   void renderDebug(const Mat4& view, const Mat4& proj);
 
 private:

@@ -1,27 +1,31 @@
 #include "game/Scene.h"
-#include "geom/GridPlane.h"
-#include "geom/MarkerCross.h"
-#include "render/RenderMesh.h"
 
-Scene::Scene() {
-  geom::GridPlane g;
-  g.build(10.0f, 10);
-  gridMesh.uploadGrid(g);
+#include <cstdio>
 
-  geom::MarkerCross m;
-  m.build(0.5f);
-  markerMesh.uploadMarker(m);
-}
+void Scene::init() {
+  // Build CPU geometry.
+  grid.build(10.0f, 10);   // size, subdivisions
+  marker.build(0.5f);      // marker "radius"
 
-void Scene::update(float dt) {
-  // nothing yet
-}
+  // Upload into our CPU-only RenderMeshes.
+  gridMesh.uploadGrid(grid);
+  markerMesh.uploadMarker(marker);
 
-void Scene::render(const Mat4& view, const Mat4& proj) {
+  // One-time debug print to confirm geometry sizes.
   gridMesh.debugPrint("grid");
   markerMesh.debugPrint("marker");
 }
 
-void Scene::renderDebug(const Mat4& view, const Mat4& proj) {
-  render(view, proj);
+void Scene::update(float /*dt*/) {
+  // No per-frame scene logic yet.
+}
+
+void Scene::render(const Mat4& /*view*/, const Mat4& /*proj*/) {
+  // Placeholder: we'll hook this up once we have a real renderer.
+  // For now, keeping this empty avoids unused-parameter warnings.
+}
+
+void Scene::renderDebug(const Mat4& /*view*/, const Mat4& /*proj*/) {
+  // Later this will draw debug overlays. For now we could spam,
+  // but that would be noisy, so we keep it quiet.
 }
