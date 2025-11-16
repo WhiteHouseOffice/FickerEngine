@@ -1,3 +1,7 @@
+#pragma once
+
+#include "math/MiniMath.h"  // Vec3, Mat4
+
 class Game {
 public:
   void init();
