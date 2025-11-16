@@ -35,6 +35,10 @@ Scene::Scene() {
   markerMesh.debugPrint("marker");
 }
 
+void Scene::update(float /*dt*/) {
+  // Per-frame scene/game-object updates will go here later.
+}
+
 void Scene::render(const Mat4& /*view*/, const Mat4& /*proj*/) {
   // GPU rendering will live here later.
 }
