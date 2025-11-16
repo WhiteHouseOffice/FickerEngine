@@ -4,18 +4,23 @@
 #include <cstdint>
 
 #include "math/MiniMath.h"
-#include "geom/GridPlane.h"
-#include "geom/MarkerCross.h"
 
-// CPU-only render mesh for now (no GPU buffers yet).
+namespace geom {
+struct GridPlane;
+struct MarkerCross;
+}
+
+// CPU-only mesh container for now.
+// Later this will know how to upload to WebGPU / WebGL.
 class RenderMesh {
 public:
-  std::vector<Vec3>     positions;
-  std::vector<uint32_t> indices;
+  std::vector<Vec3>          positions; // world-space or object-space vertices
+  std::vector<std::uint32_t> indices;   // triangle / line indices
 
-  void clear();
-
-  // Fill from CPU geometry
+  // Upload CPU geometry into this mesh (no GPU work yet).
   void uploadGrid(const geom::GridPlane& grid);
   void uploadMarker(const geom::MarkerCross& marker);
+
+  // Step 2: simple debug helper to print mesh stats.
+  void debugPrint(const char* label) const;
 };
