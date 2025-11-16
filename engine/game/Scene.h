@@ -1,24 +1,28 @@
 #pragma once
 
+#include "math/MiniMath.h"
 #include "geom/GridPlane.h"
 #include "geom/MarkerCross.h"
 #include "render/RenderMesh.h"
 
-// Simple scene: a grid floor and an origin marker
 class Scene {
 public:
   Scene();
 
-  void buildDefaultScene();  // create CPU geometry and upload into meshes
-  void update(float dt);     // for now: no-op, but keep API
+  // Advance any scene logic (currently nothing to do).
+  void update(float dt);
 
-  const RenderMesh& gridMesh()   const { return m_gridMesh; }
-  const RenderMesh& markerMesh() const { return m_markerMesh; }
+  // Main scene render – currently a no-op while RenderMesh is CPU-only.
+  void render(const Mat4& view, const Mat4& proj);
+
+  // Optional debug render – also a no-op for now.
+  void renderDebug(const Mat4& view, const Mat4& proj);
 
 private:
-  geom::GridPlane   m_gridCPU;
-  geom::MarkerCross m_markerCPU;
+  geom::GridPlane   grid;
+  geom::MarkerCross marker;
 
-  RenderMesh m_gridMesh;
-  RenderMesh m_markerMesh;
+  // CPU-only render meshes; kept around so wiring the future renderer is easy.
+  RenderMesh gridMesh;
+  RenderMesh markerMesh;
 };

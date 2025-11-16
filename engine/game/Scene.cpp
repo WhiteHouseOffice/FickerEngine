@@ -1,22 +1,16 @@
 #include "game/Scene.h"
-#include <cstdio>
 
-Scene::Scene() {
-  // CPU geometry is created by default constructors.
-  // If your GridPlane/MarkerCross take parameters, adjust here.
-  gridMesh.uploadGrid(grid);
-  markerMesh.uploadMarker(originMarker);
-}
+Scene::Scene() = default;
 
 void Scene::update(float /*dt*/) {
-  // Nothing animated yet.
+  // No scene animation or logic yet.
 }
 
 void Scene::render(const Mat4& /*view*/, const Mat4& /*proj*/) {
-  // TODO: hook CPU RenderMesh up to GPU/WebGPU/WebGL later.
+  // TODO: Once we have a GPU renderer:
+  // - Feed gridMesh / markerMesh into WebGPU/WebGL draw calls here.
 }
 
 void Scene::renderDebug(const Mat4& /*view*/, const Mat4& /*proj*/) {
-  // TODO: debug rendering will go here once GPU renderer is wired.
+  // TODO: Add any debug-only rendering here (bounds, helpers, etc.).
 }
-
