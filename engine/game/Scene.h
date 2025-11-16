@@ -1,28 +1,20 @@
+// engine/game/Scene.h
 #pragma once
 
 #include "math/MiniMath.h"
-#include "geom/GridPlane.h"
-#include "geom/MarkerCross.h"
 #include "render/RenderMesh.h"
 
-// Very small scene container for now:
-// - owns CPU geom (GridPlane, MarkerCross)
-// - owns CPU RenderMesh wrappers
-// - exposes init/update/render hooks for the Engine
+// Minimal scene that owns CPU meshes for a grid and a marker.
+// For now this is purely for debugging vertex/index upload.
 class Scene {
 public:
-  Scene() = default;  // trivial constructor, no out-of-class definition
+  Scene();
 
-  void init();
-  void update(float dt);
-
+  // These will later do real drawing; right now they're just stubs.
   void render(const Mat4& view, const Mat4& proj);
   void renderDebug(const Mat4& view, const Mat4& proj);
 
 private:
-  geom::GridPlane   grid;
-  geom::MarkerCross marker;
-
   RenderMesh gridMesh;
   RenderMesh markerMesh;
 };
