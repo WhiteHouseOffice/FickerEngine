@@ -1,45 +1,39 @@
 #include "game/Game.h"
-
 #include "core/Input.h"
-#include <cmath>
+#include "math/MiniMath.h"
+
+#include <cstdio>
 
 void Game::init() {
-  cameraPos = Vec3(0.0f, 1.5f, 5.0f);
+  camPos    = Vec3{0.f, 2.f, 5.f};
   yaw       = 0.0f;
+  logTimer  = 0.0f;
 }
 
 void Game::update(float dt) {
-  float speed = moveSpeed;
+  Vec3 delta{0.f, 0.f, 0.f};
+  const float speed = 3.0f;
 
-  // optional: sprint with SHIFT if it exists
-  if (Input::isKeyDown(Input::KEY_SHIFT)) {
-    speed *= 2.0f;
+  // Simple WASD movement in XZ plane
+  if (Input::isKeyDown(Input::KEY_W)) delta.z -= speed * dt;
+  if (Input::isKeyDown(Input::KEY_S)) delta.z += speed * dt;
+  if (Input::isKeyDown(Input::KEY_A)) delta.x -= speed * dt;
+  if (Input::isKeyDown(Input::KEY_D)) delta.x += speed * dt;
+
+  camPos += delta;
+
+  // Occasionally log camera position
+  logTimer += dt;
+  if (logTimer >= 1.0f) {
+    logTimer = 0.0f;
+    std::printf("[camera] pos = (%.2f, %.2f, %.2f)\n",
+                camPos.x, camPos.y, camPos.z);
   }
-
-  Vec3 delta(0.0f, 0.0f, 0.0f);
-
-  // Forward/right in XZ plane based on yaw
-  const float cy = std::cos(yaw);
-  const float sy = std::sin(yaw);
-
-  Vec3 forward(sy, 0.0f, -cy);
-  Vec3 right  (cy, 0.0f,  sy);
-
-  // WASD movement
-  if (Input::isKeyDown(Input::KEY_W)) delta += forward * (speed * dt);
-  if (Input::isKeyDown(Input::KEY_S)) delta -= forward * (speed * dt);
-  if (Input::isKeyDown(Input::KEY_A)) delta -= right   * (speed * dt);
-  if (Input::isKeyDown(Input::KEY_D)) delta += right   * (speed * dt);
-
-  // Horizontal look with arrow keys (if they exist)
-  //if (Input::isKeyDown(Input::KEY_LEFT))  yaw -= 1.5f * dt;
-  //if (Input::isKeyDown(Input::KEY_RIGHT)) yaw += 1.5f * dt;
-
-  cameraPos += delta;
 }
 
 Mat4 Game::view() const {
-  // For now just return a default matrix (we’ll hook into MiniMath later)
-  Mat4 view{};
-  return view;
+  const Vec3 forward{0.f, 0.f, -1.f};
+  const Vec3 up{0.f, 1.f, 0.f};
+  const Vec3 target = camPos + forward;
+  return lookAt(camPos, target, up);
 }
