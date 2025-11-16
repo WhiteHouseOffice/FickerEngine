@@ -89,6 +89,5 @@ void Scene::render(const Mat4& /*view*/, const Mat4& /*proj*/) {
   // Will call into a real renderer once WebGPU/WebGL path exists.
 }
 
-void Scene::renderDebug(const Mat4& /*view*/, const Mat4& /*proj*/) {
-  // For now, all debug happens via the one-time prints in init().
+void Scene::renderDebug(const Mat4&, const Mat4&) {
 }
