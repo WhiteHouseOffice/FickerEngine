@@ -1,34 +1,39 @@
 #include "geom/GridPlane.h"
-#include <cmath>
 
 namespace geom {
 
-GridData BuildGrid(float size, float step) {
-    GridData g;
-    if (step <= 0.f) step = 1.f;
-    int lines = static_cast<int>(std::floor(size / step));
-    if (lines < 1) lines = 1;
-    const float half = lines * step * 0.5f;
+GridPlane GridPlane::MakeXZ(int halfExtent, float spacing) {
+  GridPlane g;
 
-    // Z-directed lines at varying X
-    for (int i = -lines; i <= lines; ++i) {
-        const float x = i * step;
-        g.positions.insert(g.positions.end(), { x, 0.f, -half,  x, 0.f, +half });
-        uint32_t idx0 = static_cast<uint32_t>((g.positions.size()/3) - 2);
-        uint32_t idx1 = idx0 + 1;
-        g.indices.push_back(idx0);
-        g.indices.push_back(idx1);
-    }
-    // X-directed lines at varying Z
-    for (int j = -lines; j <= lines; ++j) {
-        const float z = j * step;
-        g.positions.insert(g.positions.end(), { -half, 0.f, z,  +half, 0.f, z });
-        uint32_t idx0 = static_cast<uint32_t>((g.positions.size()/3) - 2);
-        uint32_t idx1 = idx0 + 1;
-        g.indices.push_back(idx0);
-        g.indices.push_back(idx1);
-    }
-    return g;
+  const int   N   = halfExtent;
+  const float h   = 0.f;
+  const float max = N * spacing;
+
+  // Lines parallel to Z (varying X)
+  for (int x = -N; x <= N; ++x) {
+    float fx = x * spacing;
+
+    g.positions.push_back(Vec3{fx, h, -max});
+    g.positions.push_back(Vec3{fx, h,  max});
+
+    uint32_t base = static_cast<uint32_t>(g.positions.size() - 2);
+    g.indices.push_back(base);
+    g.indices.push_back(base + 1);
+  }
+
+  // Lines parallel to X (varying Z)
+  for (int z = -N; z <= N; ++z) {
+    float fz = z * spacing;
+
+    g.positions.push_back(Vec3{-max, h, fz});
+    g.positions.push_back(Vec3{ max, h, fz});
+
+    uint32_t base = static_cast<uint32_t>(g.positions.size() - 2);
+    g.indices.push_back(base);
+    g.indices.push_back(base + 1);
+  }
+
+  return g;
 }
 
 } // namespace geom

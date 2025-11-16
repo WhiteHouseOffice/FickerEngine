@@ -1,11 +1,19 @@
 #pragma once
-#include <vector>
-#include <cstdint>
 
+#include <vector>
+#include "math/MiniMath.h"
+
+// Pure CPU grid geometry (XZ plane lines)
 namespace geom {
-struct GridData {
-    std::vector<float>    positions; // xyz triplets
-    std::vector<uint32_t> indices;   // line list indices
+
+struct GridPlane {
+  std::vector<Vec3>     positions; // world-space vertices
+  std::vector<uint32_t> indices;   // line list indices
+
+  // Build a simple XZ grid centered at origin.
+  // halfExtent: number of cells from center to one side
+  // spacing: distance between grid lines
+  static GridPlane MakeXZ(int halfExtent, float spacing);
 };
-GridData BuildGrid(float size = 20.f, float step = 1.f);
+
 } // namespace geom

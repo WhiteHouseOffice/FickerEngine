@@ -1,15 +1,17 @@
 #pragma once
-#include <vector>
-#include <cstdint>
 
+#include <vector>
+#include "math/MiniMath.h"
+
+// Simple origin marker cross (3 axis lines)
 namespace geom {
 
-// Simple 3-axis marker centered at origin, length in meters
-struct LinesData {
-    std::vector<float>    positions; // xyz triplets
-    std::vector<uint32_t> indices;   // line list
-};
+struct MarkerCross {
+  std::vector<Vec3>     positions;
+  std::vector<uint32_t> indices;
 
-LinesData BuildMarkerCross(float length = 0.25f);
+  // size = half-length of each axis line
+  static MarkerCross MakeOrigin(float size);
+};
 
 } // namespace geom

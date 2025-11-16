@@ -1,14 +1,21 @@
 #include "game/Scene.h"
-#include "game/GameObject.h"
 
-void Scene::AddObject(const std::shared_ptr<GameObject>& obj) {
-  objects.push_back(obj);
+Scene::Scene() = default;
+
+void Scene::buildDefaultScene() {
+  // Build CPU geometry
+  m_gridCPU   = geom::GridPlane::MakeXZ(10, 1.0f);   // 21x21 grid, 1m spacing
+  m_markerCPU = geom::MarkerCross::MakeOrigin(0.5f); // small axis cross
+
+  // Upload into CPU-only RenderMesh containers
+  m_gridMesh.clear();
+  m_gridMesh.uploadGrid(m_gridCPU);
+
+  m_markerMesh.clear();
+  m_markerMesh.uploadMarker(m_markerCPU);
 }
 
-void Scene::Update(float /*dt*/) {
-  // No-op for now (kept minimal; avoids extra deps)
-}
-
-void Scene::Draw() {
-  // Intentionally empty until render pass & pipeline are wired
+void Scene::update(float /*dt*/) {
+  // Static scene for now.
+  // Later we'll put object animation / edit-mode stuff here.
 }

@@ -2,18 +2,29 @@
 
 namespace geom {
 
-LinesData BuildMarkerCross(float L) {
-    LinesData d;
-    // X axis: (-L,0,0) -> (L,0,0)
-    d.positions.insert(d.positions.end(), { -L,0,0,  L,0,0 });
-    d.indices.push_back(0); d.indices.push_back(1);
-    // Y axis: (0,-L,0) -> (0,L,0)
-    d.positions.insert(d.positions.end(), { 0,-L,0,  0,L,0 });
-    d.indices.push_back(2); d.indices.push_back(3);
-    // Z axis: (0,0,-L) -> (0,0,L)
-    d.positions.insert(d.positions.end(), { 0,0,-L,  0,0,L });
-    d.indices.push_back(4); d.indices.push_back(5);
-    return d;
+MarkerCross MarkerCross::MakeOrigin(float size) {
+  MarkerCross m;
+  const float s = size;
+
+  // X axis (red in your head)
+  m.positions.push_back(Vec3{-s, 0.f, 0.f});
+  m.positions.push_back(Vec3{ s, 0.f, 0.f});
+  m.indices.push_back(0);
+  m.indices.push_back(1);
+
+  // Y axis (green)
+  m.positions.push_back(Vec3{0.f, -s, 0.f});
+  m.positions.push_back(Vec3{0.f,  s, 0.f});
+  m.indices.push_back(2);
+  m.indices.push_back(3);
+
+  // Z axis (blue)
+  m.positions.push_back(Vec3{0.f, 0.f, -s});
+  m.positions.push_back(Vec3{0.f, 0.f,  s});
+  m.indices.push_back(4);
+  m.indices.push_back(5);
+
+  return m;
 }
 
 } // namespace geom
