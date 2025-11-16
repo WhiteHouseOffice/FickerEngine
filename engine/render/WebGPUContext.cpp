@@ -35,7 +35,8 @@ void WebGPUContext::init() {
       emscripten_webgl_create_context("#canvas", &attr);
 
   if (ctx <= 0) {
-    std::printf("[WebGPUContext] failed to create WebGL2 context (error %d)\n", ctx);
+    std::printf("[WebGPUContext] failed to create WebGL2 context (error %lu)\n",
+            static_cast<unsigned long>(ctx));
     return;
   }
 

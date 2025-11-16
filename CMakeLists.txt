@@ -62,6 +62,8 @@ if (EMSCRIPTEN)
     "-sUSE_WEBGL2=1"
     "-sMIN_WEBGL_VERSION=2"
     "-sMAX_WEBGL_VERSION=2"
+    "-sGL_UNSAFE_OPTS=0"
+
 
         # If you want custom shell / pre.js again, uncomment:
         # "--pre-js=${CMAKE_CURRENT_SOURCE_DIR}/runtime/pre.js"
