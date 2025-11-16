@@ -1,5 +1,5 @@
 #include "game/GameObject.h"
 
 void GameObject::update(float /*dt*/) {
-  // TODO: object logic goes here later.
+  // Stub for now – gameplay logic will go here later.
 }

@@ -1,11 +1,15 @@
 #pragma once
 
-// Plain placeholder GameObject for now.
-// We'll expand this later when we actually need per-object logic.
+#include "math/MiniMath.h"
+
 class GameObject {
 public:
   GameObject() = default;
+  virtual ~GameObject() = default;
 
-  // Per-frame update; currently a no-op.
-  void update(float dt);
+  // Simple stub: derived classes can override, or we flesh this out later.
+  virtual void update(float dt);
+
+  Vec3 position{0.f, 0.f, 0.f};
+  float yaw{0.f};
 };

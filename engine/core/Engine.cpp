@@ -1,70 +1,72 @@
-#include "core/Engine.h"
-
-#include "core/Time.h"
-#include "game/Game.h"
-#include "game/Scene.h"
-#include "render/WebGPUContext.h"
-
 #include <cstdio>
 
-using render::WebGPUContext;
+#include "geom/GridPlane.h"
+#include "geom/MarkerCross.h"
+#include "render/RenderMesh.h"
+#include "game/Game.h"
+#include "game/Scene.h"
+#include "core/Time.h"
+#include "core/Engine.h"
+
 
 Engine& Engine::instance() {
-  static Engine s_engine;
-  return s_engine;
+  static Engine s_instance;
+  return s_instance;
 }
 
 void Engine::init() {
-  std::puts("[Engine] init");
-  Time::init();
-
-  // Stubbed WebGPU context for now (no real GPU calls yet)
-  WebGPUContext::Get().init();
-  WebGPUContext::Get().configure(1280, 720);
+  if (initialized) return;
 
   scene = std::make_unique<Scene>();
   game  = std::make_unique<Game>();
 
   game->init();
-  // For now we don’t assume anything about Scene’s API.
-  // If Scene has its own init/build function, we’ll hook it up later.
+  // Scene constructor already builds grid + marker.
+  initialized = true;
 }
 
 void Engine::update() {
-  Time::update();
-  float dt = Time::deltaTime();
+  if (!initialized) return;
 
-  if (game) {
-    game->update(dt);
-  }
+  const float dt = Time::deltaTime();
 
-  // Scene update is left to Scene itself / future API.
-  // if (scene) { scene->update(dt); }
+  if (game)  game->update(dt);
+  if (scene) scene->update(dt);
 }
 
+// UPDATED: Step 2+ render
 void Engine::render() {
-  auto& ctx = WebGPUContext::Get();
-  if (!ctx.isReady()) {
-    return; // nothing to draw yet (WebGPU is stubbed)
+  // Temporary CPU-only debug "renderer".
+  // We generate simple geometry once and then just log its stats each frame.
+
+  static bool          s_initialized = false;
+  static geom::GridPlane   s_grid;
+  static geom::MarkerCross s_marker;
+  static RenderMesh        s_gridMesh;
+  static RenderMesh        s_markerMesh;
+
+  if (!s_initialized) {
+    // Upload CPU geometry into our CPU-only RenderMesh.
+    s_gridMesh.uploadGrid(s_grid);
+    s_markerMesh.uploadMarker(s_marker);
+    s_initialized = true;
   }
 
-  auto backbuffer = ctx.acquireSwapchainView();
-  // When we add real rendering, Scene/Game will use RenderMesh here.
-  ctx.present(backbuffer);
+  // Step 2: log mesh stats every frame so we can see the pipeline is alive.
+  s_gridMesh.debugPrint("grid");
+  s_markerMesh.debugPrint("marker");
+
+  // Later this is where we’ll:
+  //  - build view/projection from Game::view()
+  //  - walk Scene, upload objects
+  //  - forward to WebGPU/WebGL backend
 }
+
 
 void Engine::shutdown() {
-  std::puts("[Engine] shutdown");
+  if (!initialized) return;
+
   scene.reset();
   game.reset();
-}
-
-void Engine::stepOnce() {
-  if (!initialized) {
-    init();
-    initialized = true;
-  }
-
-  update();
-  render();
+  initialized = false;
 }
