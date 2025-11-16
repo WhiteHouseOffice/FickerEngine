@@ -1,11 +1,14 @@
 #include "game/Scene.h"
 
-Scene::Scene() = default;
+Scene::Scene() {
+  // Build CPU geometry once.
+  // Tweak these parameters to taste.
+  grid_.build(/*size*/ 10.0f, /*subdivisions*/ 20);
+  marker_.build(/*size*/ 0.5f);
+}
 
 void Scene::init() {
   // Copy CPU geometry into CPU-side "render meshes" once.
-  // (If GridPlane / MarkerCross currently don't build any vertices,
-  //  you'll still see 0 counts here; that's a separate step later.)
   gridMesh_.uploadGrid(grid_);
   markerMesh_.uploadMarker(marker_);
 
