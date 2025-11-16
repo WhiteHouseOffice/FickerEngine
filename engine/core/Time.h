@@ -1,10 +1,11 @@
 #pragma once
 
 namespace Time {
-    // Call once at startup
-    void init();
-    // Call once per frame
-    void update();
-    // Seconds since last update()
-    float deltaTime();
-}
+
+void init();
+void update();
+
+float deltaTime(); // seconds since last frame
+float time();      // total time since start
+
+} // namespace Time

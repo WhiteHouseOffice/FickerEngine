@@ -1,45 +1,47 @@
 #include "core/Time.h"
 
 #ifdef __EMSCRIPTEN__
-  #include <emscripten/emscripten.h> // emscripten_get_now()
+    #include <emscripten/emscripten.h>
 #else
-  #include <chrono>
+    #include <chrono>
 #endif
 
 namespace {
-    double g_last = 0.0;
-    double g_dt   = 0.0;
-
-    inline double now_seconds() {
-    #ifdef __EMSCRIPTEN__
-        // High-resolution timer (milliseconds) → seconds
-        return emscripten_get_now() * 0.001;
-    #else
-        using clock = std::chrono::steady_clock;
-        return std::chrono::duration<double>(clock::now().time_since_epoch()).count();
-    #endif
-    }
+    float g_deltaTime = 0.0f;
+    float g_time      = 0.0f;
+    double g_lastTime = 0.0;
 }
 
-namespace Time {
-
-void init() {
-    g_last = now_seconds();
-    g_dt   = 0.0;
+void Time::init() {
+#ifdef __EMSCRIPTEN__
+    g_lastTime = emscripten_get_now() / 1000.0;
+#else
+    g_lastTime = std::chrono::duration<double>(
+        std::chrono::high_resolution_clock::now().time_since_epoch()
+    ).count();
+#endif
+    g_deltaTime = 0.0f;
+    g_time      = 0.0f;
 }
 
-void update() {
-    const double t = now_seconds();
-    g_dt   = t - g_last;
-    g_last = t;
+void Time::update() {
+#ifdef __EMSCRIPTEN__
+    double now = emscripten_get_now() / 1000.0;
+#else
+    double now = std::chrono::duration<double>(
+        std::chrono::high_resolution_clock::now().time_since_epoch()
+    ).count();
+#endif
 
-    // Clamp to sane range (avoids huge dt after tab suspend)
-    if (g_dt < 0.0)   g_dt = 0.0;
-    if (g_dt > 0.2)   g_dt = 0.2; // cap at ~5 FPS worst case
+    g_deltaTime = float(now - g_lastTime);
+    g_time     += g_deltaTime;
+    g_lastTime = now;
 }
 
-float deltaTime() {
-    return static_cast<float>(g_dt);
+float Time::deltaTime() {
+    return g_deltaTime;
 }
 
-} // namespace Time
+float Time::time() {
+    return g_time;
+}
