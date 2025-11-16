@@ -1,39 +1,55 @@
 #include "render/WebGPUContext.h"
+
 #include <cstdio>
+
+#ifdef __EMSCRIPTEN__
+  #include <emscripten/html5.h>
+#endif
 
 namespace render {
 
 WebGPUContext& WebGPUContext::Get() {
-  static WebGPUContext s_ctx;
-  return s_ctx;
+  static WebGPUContext instance;
+  return instance;
 }
 
 void WebGPUContext::init() {
-  if (initialized) return;
-  std::puts("[WebGPUContext] init (stub)");
-  initialized = true;
-}
+  if (initialized_) return;
 
-void WebGPUContext::configure(int w, int h) {
-  width  = w;
-  height = h;
-  std::printf("[WebGPUContext] configure %dx%d (stub)\n", w, h);
-}
+#ifdef __EMSCRIPTEN__
+  EmscriptenWebGLContextAttributes attr;
+  emscripten_webgl_init_context_attributes(&attr);
 
-WGPUTextureView WebGPUContext::acquireSwapchainView() {
-  // In the real backend this would return a real texture view.
-  // For now, nullptr is fine.
-  return nullptr;
-}
+  attr.alpha  = EM_FALSE;
+  attr.depth  = EM_TRUE;
+  attr.stencil = EM_FALSE;
+  attr.antialias = EM_TRUE;
 
-void WebGPUContext::present(WGPUTextureView) {
-  // Stub: nothing to do.
-}
+  // Request WebGL2
+  attr.majorVersion = 2;
+  attr.minorVersion = 0;
+  attr.enableExtensionsByDefault = EM_TRUE;
 
-void WebGPUContext::resize(int w, int h) {
-  width  = w;
-  height = h;
-  std::printf("[WebGPUContext] resize %dx%d (stub)\n", w, h);
+  // Default Emscripten canvas has id="canvas"
+  EMSCRIPTEN_WEBGL_CONTEXT_HANDLE ctx =
+      emscripten_webgl_create_context("#canvas", &attr);
+
+  if (ctx <= 0) {
+    std::printf("[WebGPUContext] failed to create WebGL2 context (error %d)\n", ctx);
+    return;
+  }
+
+  if (emscripten_webgl_make_context_current(ctx) != EMSCRIPTEN_RESULT_SUCCESS) {
+    std::printf("[WebGPUContext] failed to make WebGL context current\n");
+    return;
+  }
+
+  std::printf("[WebGPUContext] WebGL2 context initialized\n");
+#else
+  std::printf("[WebGPUContext] init (native stub)\n");
+#endif
+
+  initialized_ = true;
 }
 
 } // namespace render

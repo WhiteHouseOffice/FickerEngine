@@ -54,11 +54,14 @@ if (EMSCRIPTEN)
     #  -sALLOW_MEMORY_GROWTH : nicer while debugging
     #  -sASSERTIONS       : runtime checks in debug builds
     target_link_options(FickerEngine PRIVATE
-        #"-sUSE_WEBGPU"
-        "-sASYNCIFY"
-        "-sALLOW_MEMORY_GROWTH=1"
-        "-sASSERTIONS=1"
-        "-sLEGACY_GL_EMULATION=1"
+    #"-sUSE_WEBGPU"
+    "-sASYNCIFY"
+    "-sALLOW_MEMORY_GROWTH=1"
+    "-sASSERTIONS=1"
+    "-sLEGACY_GL_EMULATION=1"
+    "-sUSE_WEBGL2=1"
+    "-sMIN_WEBGL_VERSION=2"
+    "-sMAX_WEBGL_VERSION=2"
 
         # If you want custom shell / pre.js again, uncomment:
         # "--pre-js=${CMAKE_CURRENT_SOURCE_DIR}/runtime/pre.js"
