@@ -1,23 +1,24 @@
 #pragma once
 
 #include <vector>
-#include <cstdint>
 
-// CPU geometry types
-#include "geom/GridPlane.h"
-#include "geom/MarkerCross.h"
+// Geometry lives in engine/geom/, in the global namespace.
+struct GridPlane;
+struct MarkerCross;
 
 namespace render {
 
+// Simple CPU-side mesh container.
+// No WebGPU / GL types here – just raw vertex/index data.
 class RenderMesh {
 public:
-  // CPU-only mesh for now
-  std::vector<float>         positions;
-  std::vector<std::uint32_t> indices;
+  // 3 floats per vertex: x, y, z
+  std::vector<float>        positions;
+  std::vector<unsigned int> indices;
 
   void clear();
 
-  // Upload from CPU geometry
+  // Upload from CPU geometry generators
   void uploadGrid(const GridPlane& grid);
   void uploadMarker(const MarkerCross& marker);
 };
