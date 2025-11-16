@@ -1,16 +1,27 @@
 #include "game/Scene.h"
+#include "geom/GridPlane.h"
+#include "geom/MarkerCross.h"
+#include "render/RenderMesh.h"
 
-Scene::Scene() = default;
+Scene::Scene() {
+  geom::GridPlane g;
+  g.build(10.0f, 10);
+  gridMesh.uploadGrid(g);
 
-void Scene::update(float /*dt*/) {
-  // No scene animation or logic yet.
+  geom::MarkerCross m;
+  m.build(0.5f);
+  markerMesh.uploadMarker(m);
 }
 
-void Scene::render(const Mat4& /*view*/, const Mat4& /*proj*/) {
-  // TODO: Once we have a GPU renderer:
-  // - Feed gridMesh / markerMesh into WebGPU/WebGL draw calls here.
+void Scene::update(float dt) {
+  // nothing yet
 }
 
-void Scene::renderDebug(const Mat4& /*view*/, const Mat4& /*proj*/) {
-  // TODO: Add any debug-only rendering here (bounds, helpers, etc.).
+void Scene::render(const Mat4& view, const Mat4& proj) {
+  gridMesh.debugPrint("grid");
+  markerMesh.debugPrint("marker");
+}
+
+void Scene::renderDebug(const Mat4& view, const Mat4& proj) {
+  render(view, proj);
 }

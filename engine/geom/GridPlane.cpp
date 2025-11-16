@@ -2,38 +2,30 @@
 
 namespace geom {
 
-GridPlane GridPlane::MakeXZ(int halfExtent, float spacing) {
-  GridPlane g;
+void GridPlane::build(float size, int subdivisions) {
+  positions.clear();
+  indices.clear();
 
-  const int   N   = halfExtent;
-  const float h   = 0.f;
-  const float max = N * spacing;
+  const float half = size * 0.5f;
+  const float step = size / subdivisions;
 
-  // Lines parallel to Z (varying X)
-  for (int x = -N; x <= N; ++x) {
-    float fx = x * spacing;
+  // Create grid lines (simple debug grid, no triangles)
+  for (int i = 0; i <= subdivisions; ++i) {
+    float x = -half + i * step;
 
-    g.positions.push_back(Vec3{fx, h, -max});
-    g.positions.push_back(Vec3{fx, h,  max});
+    // Vertical line
+    positions.push_back(Vec3(x, 0.f, -half));
+    positions.push_back(Vec3(x, 0.f,  half));
 
-    uint32_t base = static_cast<uint32_t>(g.positions.size() - 2);
-    g.indices.push_back(base);
-    g.indices.push_back(base + 1);
+    // Horizontal line
+    float z = -half + i * step;
+    positions.push_back(Vec3(-half, 0.f, z));
+    positions.push_back(Vec3( half, 0.f, z));
   }
 
-  // Lines parallel to X (varying Z)
-  for (int z = -N; z <= N; ++z) {
-    float fz = z * spacing;
-
-    g.positions.push_back(Vec3{-max, h, fz});
-    g.positions.push_back(Vec3{ max, h, fz});
-
-    uint32_t base = static_cast<uint32_t>(g.positions.size() - 2);
-    g.indices.push_back(base);
-    g.indices.push_back(base + 1);
-  }
-
-  return g;
+  // Indices: each pair is a line segment
+  for (int i = 0; i < positions.size(); i++)
+    indices.push_back(i);
 }
 
 } // namespace geom

@@ -2,29 +2,26 @@
 
 namespace geom {
 
-MarkerCross MarkerCross::MakeOrigin(float size) {
-  MarkerCross m;
-  const float s = size;
+void MarkerCross::build(float size) {
+  positions.clear();
+  indices.clear();
 
-  // X axis (red in your head)
-  m.positions.push_back(Vec3{-s, 0.f, 0.f});
-  m.positions.push_back(Vec3{ s, 0.f, 0.f});
-  m.indices.push_back(0);
-  m.indices.push_back(1);
+  float s = size;
 
-  // Y axis (green)
-  m.positions.push_back(Vec3{0.f, -s, 0.f});
-  m.positions.push_back(Vec3{0.f,  s, 0.f});
-  m.indices.push_back(2);
-  m.indices.push_back(3);
+  // X axis
+  positions.push_back(Vec3(-s, 0, 0));
+  positions.push_back(Vec3( s, 0, 0));
 
-  // Z axis (blue)
-  m.positions.push_back(Vec3{0.f, 0.f, -s});
-  m.positions.push_back(Vec3{0.f, 0.f,  s});
-  m.indices.push_back(4);
-  m.indices.push_back(5);
+  // Y axis
+  positions.push_back(Vec3(0, -s, 0));
+  positions.push_back(Vec3(0,  s, 0));
 
-  return m;
+  // Z axis
+  positions.push_back(Vec3(0, 0, -s));
+  positions.push_back(Vec3(0, 0,  s));
+
+  for (int i = 0; i < positions.size(); i++)
+    indices.push_back(i);
 }
 
 } // namespace geom
