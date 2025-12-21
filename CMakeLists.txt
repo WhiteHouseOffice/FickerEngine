@@ -38,7 +38,7 @@ if (EMSCRIPTEN)
     message(STATUS "Configuring for WebAssembly (Emscripten + WebGPU)")
 
     # We are the web build
-    target_compile_definitions(FickerEngine PRIVATE
+    target_compile_definitions(FickerEngine PRIVATE ENGINE_WEB=1
         FE_WEB=1
         FE_WEBGPU=1
     )
@@ -49,9 +49,11 @@ if (EMSCRIPTEN)
     )
 
     # Emscripten link options:
-    #  -sUSE_WEBGPU       : JS WebGPU shim (emscripten/webgpu.h)
-    #  -sASYNCIFY         : needed for async WebGPU init
-    #  -sALLOW_MEMORY_GROWTH : nicer while debugging
+    "-sUSE_WEBGL2=1"
+    "-sFULL_ES2=1"
+    "-sLEGACY_GL_EMULATION=1"
+    "-sALLOW_MEMORY_GROWTH=1"
+    "--shell-file" "${CMAKE_SOURCE_DIR}/shell.html" # optional, only if you have it
     #  -sASSERTIONS       : runtime checks in debug builds
     target_link_options(FickerEngine PRIVATE
     #"-sUSE_WEBGPU"

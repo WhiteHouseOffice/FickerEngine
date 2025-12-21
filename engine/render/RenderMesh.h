@@ -1,26 +1,40 @@
 #pragma once
-
 #include <vector>
 #include <cstdint>
 
-#include "math/MiniMath.h"
+namespace engine::render {
 
-namespace geom {
-struct GridPlane;
-struct MarkerCross;
-}
-
-// CPU-only mesh container for now.
-// Later this will know how to upload to WebGPU / WebGL.
 class RenderMesh {
 public:
-  std::vector<Vec3>          positions; // world-space or object-space vertices
-  std::vector<std::uint32_t> indices;   // triangle / line indices
+    struct VertexPC {
+        float x, y, z;
+        float r, g, b, a;
+    };
 
-  // Upload CPU geometry into this mesh (no GPU work yet).
-  void uploadGrid(const geom::GridPlane& grid);
-  void uploadMarker(const geom::MarkerCross& marker);
+    RenderMesh() = default;
+    ~RenderMesh();
 
-  // Step 2: simple debug helper to print mesh stats.
-  void debugPrint(const char* label) const;
+    RenderMesh(const RenderMesh&) = delete;
+    RenderMesh& operator=(const RenderMesh&) = delete;
+
+    // Upload CPU data to GPU buffers (VBO/IBO). Safe to call multiple times; re-uploads.
+    void Upload(const std::vector<VertexPC>& vertices,
+                const std::vector<std::uint32_t>& indices);
+
+    // Draw with fixed-function emulation (LEGACY_GL_EMULATION).
+    void Draw() const;
+
+    void Clear();
+
+    std::size_t VertexCount() const { return m_vertexCount; }
+    std::size_t IndexCount()  const { return m_indexCount;  }
+
+private:
+    unsigned int m_vbo = 0;
+    unsigned int m_ibo = 0;
+
+    std::size_t m_vertexCount = 0;
+    std::size_t m_indexCount  = 0;
 };
+
+} // namespace engine::render
