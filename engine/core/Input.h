@@ -2,7 +2,6 @@
 
 class Input {
 public:
-  // Key codes used by the engine (Game.cpp expects these)
   enum Key {
     KEY_W,
     KEY_A,
@@ -11,17 +10,17 @@ public:
     KEY_SPACE,
     KEY_CTRL,
     KEY_SHIFT,
+    KEY_F,      // Fly toggle
     KEY_COUNT
   };
 
   static void init();
   static void shutdown();
 
-  // Game.cpp API
   static bool isKeyDown(Key key);
   static void getMouseDelta(float& dx, float& dy);
 
-  // Platform adapters (GLFW will call these)
+  // Platform adapters (called from Main.cpp / GLFW callbacks)
   static void setKey(Key key, bool down);
   static void onMouseMove(double x, double y);
 };

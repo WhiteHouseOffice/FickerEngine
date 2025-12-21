@@ -1,25 +1,37 @@
 #pragma once
 
-#include "math/MiniMath.h"  // Vec3, Mat4
+#include "math/MiniMath.h"
 
 class Game {
 public:
   void init();
   void update(float dt);
+
+  // Used by Engine.cpp
   Mat4 view() const;
 
 private:
-  Vec3  camPos{0.f, 2.f, 5.f};
-  float yaw{0.f};   // horizontal rotation in radians
-  float pitch{0.f}; // vertical rotation in radians
-  float logTimer{0.f};
-  // --- Player physics ---
-float m_velY = 0.0f;
-bool  m_onGround = false;
+  // Camera/player state
+  Vec3  m_pos   = Vec3(0.0f, 2.0f, 5.0f);
+  float m_yaw   = 3.14159265f; // looking toward -Z-ish initially
+  float m_pitch = 0.0f;
 
-// Tuning
-float m_gravity = 9.81f;
-float m_jumpSpeed = 6.5f;
-float m_groundY = 0.0f;     // ground plane height
+  // Physics
+  float m_velY = 0.0f;
+  bool  m_onGround = false;
 
+  // Modes
+  bool  m_flyMode = false;
+  bool  m_prevFToggle = false;
+
+  // Tunables
+  float m_groundY   = 0.0f;
+  float m_gravity   = 18.0f;
+  float m_jumpSpeed = 7.0f;
+
+  float m_walkSpeed = 6.0f;
+  float m_flySpeed  = 8.0f;
+  float m_sprintMul = 2.0f;
+
+  float m_mouseSens = 0.0025f;
 };

@@ -27,6 +27,10 @@ static void glfw_key_callback(GLFWwindow* /*window*/, int key, int /*scancode*/,
       Input::setKey(Input::KEY_SHIFT, down);
       break;
 
+    case GLFW_KEY_F:
+      Input::setKey(Input::KEY_F, down);
+      break;
+
     default: break;
   }
 }

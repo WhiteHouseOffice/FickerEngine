@@ -14,6 +14,7 @@ namespace {
 
 void Input::init() {
   for (int i = 0; i < KEY_COUNT; ++i) g_keys[i] = false;
+
   g_mouseInit = false;
   g_lastX = g_lastY = 0.0;
   g_dx = g_dy = 0.0f;
@@ -44,6 +45,7 @@ void Input::onMouseMove(double x, double y) {
 
   g_dx += static_cast<float>(x - g_lastX);
   g_dy += static_cast<float>(y - g_lastY);
+
   g_lastX = x;
   g_lastY = y;
 }

@@ -1,126 +1,132 @@
+#include <cstdio>
+#include <cmath>
+
 #include "game/Game.h"
 #include "core/Input.h"
 #include "math/MiniMath.h"
 
-#include <cstdio>
-#include <cmath>
+static float clampf(float v, float lo, float hi) {
+  return (v < lo) ? lo : (v > hi) ? hi : v;
+}
 
-namespace {
-
-// Build a forward vector from yaw/pitch (in radians).
-Vec3 computeForward(float yaw, float pitch) {
-  const float cp = std::cos(pitch);
-  const float sp = std::sin(pitch);
+// Build forward/right from yaw/pitch
+static Vec3 forwardFromYawPitch(float yaw, float pitch) {
+  // yaw around Y, pitch around X
   const float cy = std::cos(yaw);
   const float sy = std::sin(yaw);
+  const float cp = std::cos(pitch);
+  const float sp = std::sin(pitch);
 
-  // Y-up, -Z forward when yaw = 0, pitch = 0
-  return Vec3{
-      sy * cp,   // x
-      sp,        // y
-     -cy * cp    // z
-  };
+  // Forward: (sinYaw*cosPitch, sinPitch, cosYaw*cosPitch)
+  return normalize(Vec3(sy * cp, sp, cy * cp));
 }
-
-Vec3 computeRight(const Vec3& forward) {
-  const Vec3 worldUp{0.f, 1.f, 0.f};
-  // right = forward x up
-  Vec3 right = cross(forward, worldUp);
-  float lenSq = right.x*right.x + right.y*right.y + right.z*right.z;
-  if (lenSq > 0.0f) {
-    float invLen = 1.0f / std::sqrt(lenSq);
-    right.x *= invLen;
-    right.y *= invLen;
-    right.z *= invLen;
-  }
-  return right;
-}
-
-} // namespace
 
 void Game::init() {
-  camPos    = Vec3{0.f, 2.f, 5.f};
-  yaw       = 0.0f;
-  pitch     = 0.0f;
-  logTimer  = 0.0f;
+  // Nothing else needed; m_pos defaults are fine.
 }
 
 void Game::update(float dt) {
-  // --- Mouse look ---
-  float dx = 0.0f, dy = 0.0f;
-  Input::getMouseDelta(dx, dy);
+  // ---- Fly toggle on F press (edge-trigger) ----
+  const bool fDown = Input::isKeyDown(Input::KEY_F);
+  if (fDown && !m_prevFToggle) {
+    m_flyMode = !m_flyMode;
+    // When entering fly mode, kill vertical velocity so it feels clean.
+    if (m_flyMode) {
+      m_velY = 0.0f;
+      m_onGround = false;
+    }
+    printf("FlyMode: %s\n", m_flyMode ? "ON" : "OFF");
+  }
+  m_prevFToggle = fDown;
 
-  const float mouseSensitivity = 0.0025f; // radians per pixel
-  yaw   += dx * mouseSensitivity;
-  pitch += -dy * mouseSensitivity; // invert so moving mouse up looks up
+  // ---- Mouse look ----
+  float mdx = 0.0f, mdy = 0.0f;
+  Input::getMouseDelta(mdx, mdy);
+
+  m_yaw   += mdx * m_mouseSens;
+  m_pitch += -mdy * m_mouseSens; // invert so mouse up looks up
 
   // Clamp pitch to avoid flipping
-  const float maxPitch = 1.5f; // ~86 degrees
-  if (pitch >  maxPitch) pitch =  maxPitch;
-  if (pitch < -maxPitch) pitch = -maxPitch;
+  const float pitchLimit = 1.55334f; // ~89 degrees
+  m_pitch = clampf(m_pitch, -pitchLimit, pitchLimit);
 
-  // --- Build camera basis vectors ---
-  Vec3 forward = computeForward(yaw, pitch);
-  Vec3 right   = computeRight(forward);
-  const Vec3 up{0.f, 1.f, 0.f};
+  const Vec3 up = Vec3(0.0f, 1.0f, 0.0f);
 
-  // --- Keyboard movement ---
-  Vec3 move{0.f, 0.f, 0.f};
-  float speed = 3.0f;
+  const Vec3 fwd = forwardFromYawPitch(m_yaw, m_pitch);
+  Vec3 right = normalize(cross(fwd, up));
 
-  if (Input::isKeyDown(Input::KEY_W))     move += forward;
-  if (Input::isKeyDown(Input::KEY_S))     move -= forward;
-  if (Input::isKeyDown(Input::KEY_A))     move -= right;
-  if (Input::isKeyDown(Input::KEY_D))     move += right;
-  if (Input::isKeyDown(Input::KEY_SPACE)) move += up;
-  if (Input::isKeyDown(Input::KEY_CTRL))  move -= up;
+  // ---- Speed ----
+  float speed = m_flyMode ? m_flySpeed : m_walkSpeed;
+  if (Input::isKeyDown(Input::KEY_SHIFT)) speed *= m_sprintMul;
 
-  if (Input::isKeyDown(Input::KEY_SHIFT)) speed *= 2.0f;
+  // ---- Movement intent ----
+  Vec3 move(0.0f, 0.0f, 0.0f);
 
-  // Normalize move vector so diagonal isn't faster
-  float lenSq = move.x*move.x + move.y*move.y + move.z*move.z;
-  if (lenSq > 0.0f) {
-    float invLen = 1.0f / std::sqrt(lenSq);
-    move.x *= invLen;
-    move.y *= invLen;
-    move.z *= invLen;
+  if (m_flyMode) {
+    // Fly mode: move in true camera forward/right; Space up; Ctrl down
+    if (Input::isKeyDown(Input::KEY_W)) move += fwd;
+    if (Input::isKeyDown(Input::KEY_S)) move -= fwd;
+    if (Input::isKeyDown(Input::KEY_A)) move -= right;
+    if (Input::isKeyDown(Input::KEY_D)) move += right;
 
-    camPos += move * (speed * dt);
+    if (Input::isKeyDown(Input::KEY_SPACE)) move += up;
+    if (Input::isKeyDown(Input::KEY_CTRL))  move -= up;
+
+    if (length(move) > 0.0001f) {
+      move = normalize(move);
+      m_pos += move * (speed * dt);
+    }
+
+    // No gravity in fly mode
+    m_velY = 0.0f;
+    m_onGround = false;
+  } else {
+    // Walk mode: project movement onto ground plane so W/A/S/D never changes Y
+    Vec3 fwdFlat(fwd.x, 0.0f, fwd.z);
+    if (length(fwdFlat) > 0.0001f) fwdFlat = normalize(fwdFlat);
+    Vec3 rightFlat = normalize(cross(fwdFlat, up));
+
+    if (Input::isKeyDown(Input::KEY_W)) move += fwdFlat;
+    if (Input::isKeyDown(Input::KEY_S)) move -= fwdFlat;
+    if (Input::isKeyDown(Input::KEY_A)) move -= rightFlat;
+    if (Input::isKeyDown(Input::KEY_D)) move += rightFlat;
+
+    if (length(move) > 0.0001f) {
+      move = normalize(move);
+      m_pos += move * (speed * dt);
+    }
+
+    // ---- Jump ----
+    if (m_onGround && Input::isKeyDown(Input::KEY_SPACE)) {
+      m_velY = m_jumpSpeed;
+      m_onGround = false;
+    }
+
+    // ---- Gravity + ground collision ----
+    m_velY -= m_gravity * dt;
+    m_pos.y += m_velY * dt;
+
+    if (m_pos.y <= m_groundY) {
+      m_pos.y = m_groundY;
+      m_velY = 0.0f;
+      m_onGround = true;
+    } else {
+      m_onGround = false;
+      // Optional: if you want Ctrl to “fall faster” while airborne (Minecraft-ish):
+      if (Input::isKeyDown(Input::KEY_CTRL)) {
+        m_velY -= (m_gravity * 1.5f) * dt;
+      }
+    }
   }
 
-  // --- Debug camera log to console once per second ---
-  logTimer += dt;
-  if (logTimer >= 1.0f) {
-    logTimer = 0.0f;
-    std::printf("[camera] pos = (%.2f, %.2f, %.2f)\n",
-                camPos.x, camPos.y, camPos.z);
-  }
-  // ---- Gravity + ground collision ----
-m_velY -= m_gravity * dt;
-
-// Apply vertical velocity to your position
-position.y += m_velY * dt;   // <-- use your actual position variable name (pos/position/camPos)
-
-// Ground collision (simple plane at y = m_groundY)
-if (position.y <= m_groundY) {
-  position.y = m_groundY;
-  m_velY = 0.0f;
-  m_onGround = true;
-} else {
-  m_onGround = false;
-}
-
-// Jump (space)
-if (m_onGround && Input::isKeyDown(Input::KEY_SPACE)) {
-  m_velY = m_jumpSpeed;
-  m_onGround = false;
-}
-
+  // Debug print (matches what you saw earlier)
+  printf("pos: %.2f, %.2f, %.2f\n", m_pos.x, m_pos.y, m_pos.z);
 }
 
 Mat4 Game::view() const {
-  Vec3 forward = computeForward(yaw, pitch);
-  const Vec3 up{0.f, 1.f, 0.f};
-  const Vec3 target = camPos + forward;
-  return lookAt(camPos, target, up);
+  const Vec3 fwd = forwardFromYawPitch(m_yaw, m_pitch);
+  const Vec3 target = m_pos + fwd;
+
+  // MiniMath usually provides lookAt(). If yours doesn't, tell me and I’ll adapt.
+  return lookAt(m_pos, target, Vec3(0.0f, 1.0f, 0.0f));
 }
