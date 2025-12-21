@@ -44,7 +44,7 @@ private:
   float m_sprintMul = 2.0f;
 
   // Mouse tuning
-  float m_mouseSens = 0.0008f;
+  float m_mouseSens = 0.0010f;
 
   // Platforms
   static constexpr int kMaxPlatforms = 8;
