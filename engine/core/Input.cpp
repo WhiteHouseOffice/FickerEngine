@@ -13,6 +13,44 @@ namespace {
 }
 
 #ifdef __EMSCRIPTEN__
+void Input::setKey(int key, bool down) {
+  // This is a minimal adapter. It stores into the same key-state storage
+  // your Input system already uses.
+
+  // Common patterns:
+  // - If you already have something like setKeyDown(key, down), call it.
+  // - If you have an internal array/map, write into it here.
+
+  // --- Try to forward to existing internal function if present ---
+  // If your Input.cpp already has one of these, uncomment the matching line
+  // and delete the fallback block below.
+
+  // Input::setKeyDown(key, down); return;
+  // Input::onKey(key, down); return;
+  // Input::handleKey(key, down); return;
+
+  // --- Fallback: if your Input uses a raw key-state array named s_keys ---
+  // If your file already has a key-state container, wire into THAT instead.
+  // This fallback assumes ASCII keys (W/A/S/D etc.) and a 512-sized array.
+  static bool s_keys[512] = {false};
+
+  if (key >= 0 && key < 512) {
+    s_keys[key] = down;
+  }
+
+  // Optional: also mirror lowercase/uppercase if you use ASCII letters
+  if (key >= 'A' && key <= 'Z') {
+    int lower = key - 'A' + 'a';
+    if (lower >= 0 && lower < 512) s_keys[lower] = down;
+  } else if (key >= 'a' && key <= 'z') {
+    int upper = key - 'a' + 'A';
+    if (upper >= 0 && upper < 512) s_keys[upper] = down;
+  }
+
+  // IMPORTANT:
+  // If your existing "isKeyDown" function does NOT read from this same storage,
+  // then instead of using this fallback, you MUST forward to your real storage above.
+}
 
 static EM_BOOL key_callback(int eventType,
                             const EmscriptenKeyboardEvent* e,

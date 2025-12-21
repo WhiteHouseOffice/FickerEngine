@@ -19,6 +19,8 @@ enum MouseButton {
   MOUSE_MIDDLE,
   MOUSE_BUTTON_COUNT
 };
+// GLFW adapter: allows platform layer to push key states into Input
+static void setKey(int key, bool down);
 
 // Call once at startup (Engine::init) to hook input.
 void init();
