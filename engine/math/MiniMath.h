@@ -25,6 +25,7 @@ inline Vec3 normalize(const Vec3& v){
     float L = std::sqrt(dot(v,v));
     return (L>0.f) ? Vec3{v.x/L, v.y/L, v.z/L} : Vec3{};
 }
+inline float length(const Vec3& v) { return std::sqrt(dot(v, v)); }
 
 struct Mat4 {
     // Column-major 4x4
