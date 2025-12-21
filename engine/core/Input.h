@@ -23,6 +23,12 @@ enum MouseButton {
 // Call once at startup (Engine::init) to hook input.
 void init();
 
+// Platform backends (web/native) feed events into the shared input state.
+// On web this is driven by Emscripten callbacks; on native by the window loop.
+void setKeyDown(Key key, bool down);
+void setMouseButtonDown(MouseButton button, bool down);
+void addMouseDelta(float dx, float dy);
+
 // Query key / mouse button state.
 bool isKeyDown(Key key);
 bool isMouseButtonDown(MouseButton button);

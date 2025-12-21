@@ -74,35 +74,56 @@ static EM_BOOL mouseup_callback(int /*eventType*/,
 #endif // __EMSCRIPTEN__
 
 void Input::init() {
-#ifdef __EMSCRIPTEN__
-  std::memset(g_keys, 0, sizeof(g_keys));
-  std::memset(g_mouseButtons, 0, sizeof(g_mouseButtons));
+  // Always reset shared input state.
+  #ifdef __EMSCRIPTEN__
+    std::memset(g_keys, 0, sizeof(g_keys));
+    std::memset(g_mouseButtons, 0, sizeof(g_mouseButtons));
+  #else
+    for (int i = 0; i < Input::KEY_COUNT; ++i) g_keys[i] = false;
+    for (int i = 0; i < Input::MOUSE_BUTTON_COUNT; ++i) g_mouseButtons[i] = false;
+  #endif
   g_mouseDeltaX = g_mouseDeltaY = 0.0f;
 
-  // Keyboard
-  emscripten_set_keydown_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW,
+  #ifdef __EMSCRIPTEN__
+    // Keyboard
+    emscripten_set_keydown_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW,
+                                    nullptr,
+                                    EM_TRUE,
+                                    key_callback);
+    emscripten_set_keyup_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW,
                                   nullptr,
                                   EM_TRUE,
                                   key_callback);
-  emscripten_set_keyup_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW,
-                                nullptr,
-                                EM_TRUE,
-                                key_callback);
 
-  // Mouse movement + buttons
-  emscripten_set_mousemove_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW,
+    // Mouse movement + buttons
+    emscripten_set_mousemove_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW,
+                                      nullptr,
+                                      EM_TRUE,
+                                      mousemove_callback);
+    emscripten_set_mousedown_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW,
+                                      nullptr,
+                                      EM_TRUE,
+                                      mousedown_callback);
+    emscripten_set_mouseup_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW,
                                     nullptr,
                                     EM_TRUE,
-                                    mousemove_callback);
-  emscripten_set_mousedown_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW,
-                                    nullptr,
-                                    EM_TRUE,
-                                    mousedown_callback);
-  emscripten_set_mouseup_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW,
-                                  nullptr,
-                                  EM_TRUE,
-                                  mouseup_callback);
-#endif
+                                    mouseup_callback);
+  #endif
+}
+
+void Input::setKeyDown(Key key, bool down) {
+  if (key < 0 || key >= KEY_COUNT) return;
+  g_keys[key] = down;
+}
+
+void Input::setMouseButtonDown(MouseButton button, bool down) {
+  if (button < 0 || button >= MOUSE_BUTTON_COUNT) return;
+  g_mouseButtons[button] = down;
+}
+
+void Input::addMouseDelta(float dx, float dy) {
+  g_mouseDeltaX += dx;
+  g_mouseDeltaY += dy;
 }
 
 bool Input::isKeyDown(Key key) {

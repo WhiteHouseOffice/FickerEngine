@@ -1,22 +1,16 @@
 #pragma once
 
-#include <cstdint>
-#include "geom/GridPlane.h"
-#include "geom/MarkerCross.h"
-#include "render/RenderMesh.h"
+#include "math/MiniMath.h"   // Mat4, Vec3 etc (whatever your engine uses)
 
 class Scene {
 public:
   Scene() = default;
 
-  void init();
-  void render();
+  // Engine expects these:
+  void update(float dt);
+  void render(const Mat4& view, const Mat4& proj);
+  void renderDebug(const Mat4& view, const Mat4& proj);
 
-private:
-  geom::GridPlane grid_;
-  geom::MarkerCross marker_;
-
-  engine::render::RenderMesh groundMesh_;
-  engine::render::RenderMesh gridMesh_;
-  engine::render::RenderMesh markerMesh_;
+  // Optional compatibility wrapper (so other code calling render() still works)
+  void render() { render(Mat4::identity(), Mat4::identity()); }
 };
