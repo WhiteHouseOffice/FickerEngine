@@ -2,6 +2,12 @@
 
 #include "math/MiniMath.h"
 
+// Public helper type (so Game.cpp helper functions can use it)
+struct AABB {
+  Vec3 min;
+  Vec3 max;
+};
+
 class Game {
 public:
   void init();
@@ -34,7 +40,6 @@ private:
   float m_mouseSens = 0.0025f;
 
   // Simple static world (AABB platforms)
-  struct AABB { Vec3 min; Vec3 max; };
   static constexpr int kMaxPlatforms = 8;
   AABB m_platforms[kMaxPlatforms];
   int  m_platformCount = 0;
