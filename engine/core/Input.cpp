@@ -180,3 +180,15 @@ void Input::getMouseDelta(float& dx, float& dy) {
   g_mouseDeltaX = 0.0f;
   g_mouseDeltaY = 0.0f;
 }
+void Input::setKey(int key, bool down) {
+  // IMPORTANT: write into the SAME storage your Input queries read from.
+
+  // If you already have something like a key array (e.g. s_keys / g_keys),
+  // replace `s_keys` below with the real one.
+
+  extern bool s_keys[512]; // <-- REMOVE this line if s_keys is already visible here
+
+  if (key >= 0 && key < 512) {
+    s_keys[key] = down;
+  }
+}
