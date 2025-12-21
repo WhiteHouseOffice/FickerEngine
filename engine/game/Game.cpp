@@ -9,8 +9,6 @@ static float clampf(float v, float lo, float hi) {
   return (v < lo) ? lo : (v > hi) ? hi : v;
 }
 
-static float length(const Vec3& v) { return std::sqrt(dot(v, v)); }
-
 static Vec3 forwardFromYawPitch(float yaw, float pitch) {
   const float cy = std::cos(yaw);
   const float sy = std::sin(yaw);
