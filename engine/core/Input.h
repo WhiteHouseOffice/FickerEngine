@@ -22,8 +22,7 @@ public:
   static void setKey(Key key, bool down);
   static bool isKeyDown(Key key);
 
-  // Mouse
-  static void onMouseMove(double x, double y);  // <- ADD
-  static void resetMouse();                     // <- ADD
+  // Mouse deltas (relative)
+  static void addMouseDelta(float dx, float dy);
   static void getMouseDelta(float& dx, float& dy);
 };
