@@ -27,7 +27,6 @@ list(REMOVE_DUPLICATES SOURCES)
 
 add_executable(FickerEngine ${SOURCES})
 
-# Allow includes like:  #include "render/RenderMesh.h"
 target_include_directories(FickerEngine PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/engine
 )
@@ -39,39 +38,35 @@ if (EMSCRIPTEN)
     message(STATUS "Configuring for WebAssembly (Emscripten)")
 
     target_compile_definitions(FickerEngine PRIVATE
-        ENGINE_WEB=1
         FE_WEB=1
         FE_WEBGPU=1
+        ENGINE_WEB=1
     )
 
-    # Generate a full HTML page
+    # Generate a full HTML page output
     set_target_properties(FickerEngine PROPERTIES
         SUFFIX ".html"
     )
 
-    # IMPORTANT:
-    # All Emscripten flags must be inside target_link_options().
-    # Bare quoted strings (e.g. "-sUSE_WEBGL2=1" on its own line) cause a CMake parse error.
+    # Emscripten link options:
     target_link_options(FickerEngine PRIVATE
         "-sASYNCIFY"
         "-sALLOW_MEMORY_GROWTH=1"
         "-sASSERTIONS=1"
-
-        # Legacy/WebGL backend support (no shader files / fixed-function emulation)
         "-sLEGACY_GL_EMULATION=1"
         "-sUSE_WEBGL2=1"
         "-sMIN_WEBGL_VERSION=2"
         "-sMAX_WEBGL_VERSION=2"
         "-sGL_UNSAFE_OPTS=0"
 
-        # If you have custom shell/pre-js, uncomment and make sure the files exist:
+        # If you add these files back later, you can enable them:
         # "--pre-js=${CMAKE_CURRENT_SOURCE_DIR}/runtime/pre.js"
         # "--shell-file=${CMAKE_CURRENT_SOURCE_DIR}/runtime/shell.html"
     )
 
 else()
     # ----------------------------------------------------------------------------------
-    # Native build (very minimal for now)
+    # Native build (minimal)
     # ----------------------------------------------------------------------------------
     message(STATUS "Configuring native build")
 
