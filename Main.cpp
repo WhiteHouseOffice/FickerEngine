@@ -1,5 +1,4 @@
 #include <cstdio>
-#include <cmath>
 
 #include <GLFW/glfw3.h>
 #include <GL/gl.h>
@@ -16,24 +15,24 @@ static void PollMovementKeys(GLFWwindow* window) {
   Input::setKey(Input::KEY_D, glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS);
 }
 
-static void CenterCursor(GLFWwindow* window) {
-  int w = 0, h = 0;
-  glfwGetWindowSize(window, &w, &h);
-  glfwSetCursorPos(window, w * 0.5, h * 0.5);
-}
-
 static void SetCaptured(GLFWwindow* window, bool captured) {
   g_captured = captured;
 
   if (captured) {
-    // IMPORTANT: HIDDEN is far more reliable than DISABLED on WSLg/Wayland/remote.
-    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_HIDDEN);
+    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+
+    // Optional: only works when cursor is disabled
+    if (glfwRawMouseMotionSupported()) {
+      glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, GLFW_TRUE);
+    }
+
+    // Avoid huge jump on first move after capture
+    Input::resetMouse();
   } else {
     glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+    glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, GLFW_FALSE);
+    Input::resetMouse();
   }
-
-  Input::resetAll();
-  CenterCursor(window);
 }
 
 static void glfw_window_close_callback(GLFWwindow* window) {
@@ -72,9 +71,15 @@ static void glfw_key_callback(GLFWwindow* window, int key, int /*scancode*/, int
 }
 
 static void glfw_focus_callback(GLFWwindow* window, int focused) {
-  // Losing focus should always release our capture so input doesn't "die".
+  // If you alt-tab, release capture so input doesn't "stick/die"
   if (!focused && g_captured) SetCaptured(window, false);
   Input::resetAll();
+}
+
+static void glfw_cursor_pos_callback(GLFWwindow* /*window*/, double x, double y) {
+  // ONLY feed deltas when captured
+  if (!g_captured) return;
+  Input::onMouseMove(x, y);
 }
 
 int main() {
@@ -101,43 +106,16 @@ int main() {
   glfwSetMouseButtonCallback(window, glfw_mouse_button_callback);
   glfwSetKeyCallback(window, glfw_key_callback);
   glfwSetWindowFocusCallback(window, glfw_focus_callback);
+  glfwSetCursorPosCallback(window, glfw_cursor_pos_callback);
 
   glEnable(GL_DEPTH_TEST);
 
   Engine::instance().init();
-
-  // Start released; click to capture
   SetCaptured(window, false);
 
   while (!glfwWindowShouldClose(window)) {
     glfwPollEvents();
     PollMovementKeys(window);
-
-    // Software relative mouse: delta-from-center then warp-to-center
-    if (g_captured) {
-      int w = 0, h = 0;
-      glfwGetWindowSize(window, &w, &h);
-      const double cx = w * 0.5;
-      const double cy = h * 0.5;
-
-      double mx = cx, my = cy;
-      glfwGetCursorPos(window, &mx, &my);
-
-      // Drift guard:
-      // If the platform feeds bogus coords (e.g., stuck at 0,0) we do NOT inject deltas.
-      // This prevents the constant down-left spin.
-      const double dx = mx - cx;
-      const double dy = my - cy;
-
-      const double maxReasonable = 200.0; // prevents one-frame spikes
-      if (std::abs(dx) <= maxReasonable && std::abs(dy) <= maxReasonable) {
-        if (dx != 0.0 || dy != 0.0) {
-          Input::addMouseDelta((float)dx, (float)dy);
-        }
-      }
-
-      glfwSetCursorPos(window, cx, cy);
-    }
 
     glClearColor(0.1f, 0.2f, 0.35f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);

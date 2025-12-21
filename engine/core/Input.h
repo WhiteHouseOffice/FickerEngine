@@ -22,7 +22,10 @@ public:
   static void setKey(Key key, bool down);
   static bool isKeyDown(Key key);
 
-  // Mouse deltas (relative)
-  static void addMouseDelta(float dx, float dy);
+  // Mouse (relative deltas)
+  static void onMouseMove(double x, double y);
   static void getMouseDelta(float& dx, float& dy);
+
+  // NEW: reset just mouse tracking (keep keys intact if you want)
+  static void resetMouse();
 };
