@@ -1,10 +1,12 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(FickerEngine CXX)
+project(FickerEngine LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+
+option(BUILD_WEB "Build with Emscripten/WebGL" OFF)
 
 # --------------------------------------------------------------------------------------
 # Sources
@@ -22,7 +24,6 @@ set(SOURCES
     ${ENGINE_GAME}
     ${RUNTIME_SRC}
 )
-
 list(REMOVE_DUPLICATES SOURCES)
 
 add_executable(FickerEngine ${SOURCES})
@@ -32,34 +33,30 @@ target_include_directories(FickerEngine PRIVATE
 )
 
 # --------------------------------------------------------------------------------------
-# Emscripten / Web build
+# Web build (Emscripten)
 # --------------------------------------------------------------------------------------
-if (EMSCRIPTEN)
+if(EMSCRIPTEN OR BUILD_WEB)
     message(STATUS "Configuring for WebAssembly (Emscripten)")
 
     target_compile_definitions(FickerEngine PRIVATE
         ENGINE_WEB=1
         FE_WEB=1
-        FE_WEBGPU=1
     )
 
-    # Generate HTML output
+    # Emit an HTML launcher.
     set_target_properties(FickerEngine PROPERTIES SUFFIX ".html")
 
+    # IMPORTANT:
+    # - We use LEGACY_GL_EMULATION (fixed-function style).
+    # - DO NOT enable FULL_ES2 at the same time (it conflicts and crashes link).
     target_link_options(FickerEngine PRIVATE
-        "-sASYNCIFY"
-        "-sALLOW_MEMORY_GROWTH=1"
-        "-sASSERTIONS=1"
-
-        # WebGL2 + ES2 + Legacy fixed-function emulation
         "-sUSE_WEBGL2=1"
         "-sMIN_WEBGL_VERSION=2"
         "-sMAX_WEBGL_VERSION=2"
-        "-sFULL_ES2=1"
         "-sLEGACY_GL_EMULATION=1"
-
-        # Optional custom shell (only if file exists)
-        # "--shell-file=${CMAKE_SOURCE_DIR}/shell.html"
+        "-sALLOW_MEMORY_GROWTH=1"
+        "-sASYNCIFY"
+        "-sASSERTIONS=1"
     )
 
 else()
