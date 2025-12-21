@@ -4,6 +4,7 @@
 
 class Scene {
 public:
+  void init();
   Scene() = default;
 
   // Engine expects these:
