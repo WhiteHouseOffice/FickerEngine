@@ -62,7 +62,7 @@ static bool resolveSphereAABB(Vec3& center, Vec3& vel, float r, const AABB& b) {
 
   return true;
 }
-
+#if 0
 void Game::init() {
   m_pos = Vec3(0.0f, 0.0f, 5.0f);
   m_vel = Vec3(0.0f, 0.0f, 0.0f);
@@ -180,3 +180,4 @@ Mat4 Game::view() const {
   const Vec3 fwd = forwardFromYawPitch(m_yaw, m_pitch);
   return lookAt(eye, eye + fwd, Vec3(0,1,0));
 }
+#endif
