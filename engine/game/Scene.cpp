@@ -1,78 +1,66 @@
 #include "game/Scene.h"
 
-#if defined(FE_WEB) || defined(__EMSCRIPTEN__)
+#ifdef __EMSCRIPTEN__
+  #include <GLES/gl.h>
+#else
   #include <GL/gl.h>
 #endif
 
 using engine::render::RenderMesh;
 
-static std::vector<RenderMesh::VertexPC>
-MakeVerticesPC(const std::vector<Vec3>& positions, float r, float g, float b, float a) {
-  std::vector<RenderMesh::VertexPC> out;
-  out.reserve(positions.size());
-  for (const auto& p : positions) {
-    out.push_back(RenderMesh::VertexPC{ p.x, p.y, p.z, r, g, b, a });
-  }
+static RenderMesh::VertexPC V(float x,float y,float z, float r,float g,float b,float a) {
+  RenderMesh::VertexPC v{};
+  v.x=x; v.y=y; v.z=z; v.r=r; v.g=g; v.b=b; v.a=a;
+  return v;
+}
+
+static std::vector<std::uint16_t> ToU16Indices(const std::vector<int>& idx) {
+  std::vector<std::uint16_t> out;
+  out.reserve(idx.size());
+  for (int i : idx) out.push_back((std::uint16_t)i);
   return out;
-}
-
-static std::vector<std::uint32_t>
-MakeIndicesU32(const std::vector<int>& indices) {
-  std::vector<std::uint32_t> out;
-  out.reserve(indices.size());
-  for (int i : indices) out.push_back(static_cast<std::uint32_t>(i));
-  return out;
-}
-
-Scene::Scene() {
-  grid_.build(/*size*/ 10.0f, /*subdivisions*/ 20);
-  marker_.build(/*size*/ 0.5f);
-}
-
-void Scene::buildGroundQuad(float halfSize) {
-  // 2 triangles on XZ plane at y=0
-  std::vector<RenderMesh::VertexPC> v = {
-    {-halfSize, 0.f, -halfSize, 0.20f, 0.20f, 0.20f, 1.f},
-    { halfSize, 0.f, -halfSize, 0.20f, 0.20f, 0.20f, 1.f},
-    { halfSize, 0.f,  halfSize, 0.20f, 0.20f, 0.20f, 1.f},
-    {-halfSize, 0.f,  halfSize, 0.20f, 0.20f, 0.20f, 1.f},
-  };
-  std::vector<std::uint32_t> idx = {
-    0, 1, 2,
-    0, 2, 3
-  };
-
-  groundMesh_.Upload(v, idx, GL_TRIANGLES);
 }
 
 void Scene::init() {
-  // Grid + marker as lines
-  auto gridV = MakeVerticesPC(grid_.positions, 0.55f, 0.55f, 0.55f, 1.f);
-  auto gridI = MakeIndicesU32(grid_.indices);
+  // Build CPU geom
+  grid_.build(10.0f, 20);
+  marker_.build(1.0f);
+
+  // -------- Ground quad (two triangles) --------
+  // A simple "walkable plane" centered at origin (y=0)
+  std::vector<RenderMesh::VertexPC> groundV;
+  groundV.reserve(4);
+  groundV.push_back(V(-10.f, 0.f, -10.f, 0.25f, 0.25f, 0.25f, 1.f));
+  groundV.push_back(V( 10.f, 0.f, -10.f, 0.25f, 0.25f, 0.25f, 1.f));
+  groundV.push_back(V( 10.f, 0.f,  10.f, 0.25f, 0.25f, 0.25f, 1.f));
+  groundV.push_back(V(-10.f, 0.f,  10.f, 0.25f, 0.25f, 0.25f, 1.f));
+
+  std::vector<std::uint16_t> groundI = {0,1,2, 0,2,3};
+  groundMesh_.Upload(groundV, groundI, GL_TRIANGLES);
+
+  // -------- Grid (lines) --------
+  std::vector<RenderMesh::VertexPC> gridV;
+  gridV.reserve(grid_.positions.size());
+  for (auto& p : grid_.positions) {
+    gridV.push_back(V(p.x, p.y, p.z, 0.2f, 0.8f, 0.2f, 1.f));
+  }
+  std::vector<std::uint16_t> gridI = ToU16Indices(grid_.indices);
   gridMesh_.Upload(gridV, gridI, GL_LINES);
 
-  auto markerV = MakeVerticesPC(marker_.positions, 1.f, 1.f, 1.f, 1.f);
-  auto markerI = MakeIndicesU32(marker_.indices);
+  // -------- Marker (lines) --------
+  std::vector<RenderMesh::VertexPC> markerV;
+  markerV.reserve(marker_.positions.size());
+  for (auto& p : marker_.positions) {
+    markerV.push_back(V(p.x, p.y, p.z, 1.0f, 0.2f, 0.2f, 1.f));
+  }
+  std::vector<std::uint16_t> markerI = ToU16Indices(marker_.indices);
   markerMesh_.Upload(markerV, markerI, GL_LINES);
-
-  // Solid ground plane (walkable visual target)
-  buildGroundQuad(5.0f);
 }
 
-void Scene::update(float /*dt*/) {
-  // no-op for now
-}
-
-void Scene::render(const Mat4& /*view*/, const Mat4& /*proj*/) {
-#if defined(FE_WEB) || defined(__EMSCRIPTEN__)
-  // For now we ignore view/proj and just draw in legacy pipeline.
-  // Next step will be to apply transforms (camera) properly.
+void Scene::render() {
+  // If you already set up camera matrices elsewhere, keep doing that there.
+  // This is just drawing the meshes.
   groundMesh_.Draw();
   gridMesh_.Draw();
   markerMesh_.Draw();
-#endif
-}
-
-void Scene::renderDebug(const Mat4& /*view*/, const Mat4& /*proj*/) {
-  // keep clean for now
 }

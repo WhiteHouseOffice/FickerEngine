@@ -6,36 +6,34 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-option(BUILD_WEB "Build with Emscripten/WebGL" OFF)
-
 # --------------------------------------------------------------------------------------
 # Sources
 # --------------------------------------------------------------------------------------
-file(GLOB_RECURSE ENGINE_CORE    "engine/core/*.cpp")
-file(GLOB_RECURSE ENGINE_GEOM    "engine/geom/*.cpp")
-file(GLOB_RECURSE ENGINE_RENDER  "engine/render/*.cpp")
-file(GLOB_RECURSE ENGINE_GAME    "engine/game/*.cpp")
+file(GLOB_RECURSE ENGINE_CORE   CONFIGURE_DEPENDS "engine/core/*.cpp")
+file(GLOB_RECURSE ENGINE_GEOM   CONFIGURE_DEPENDS "engine/geom/*.cpp")
+file(GLOB_RECURSE ENGINE_RENDER CONFIGURE_DEPENDS "engine/render/*.cpp")
+file(GLOB_RECURSE ENGINE_GAME   CONFIGURE_DEPENDS "engine/game/*.cpp")
 set(RUNTIME_SRC "runtime/main.cpp")
 
-set(SOURCES
+set(ALL_SRC
     ${ENGINE_CORE}
     ${ENGINE_GEOM}
     ${ENGINE_RENDER}
     ${ENGINE_GAME}
     ${RUNTIME_SRC}
 )
-list(REMOVE_DUPLICATES SOURCES)
+list(REMOVE_DUPLICATES ALL_SRC)
 
-add_executable(FickerEngine ${SOURCES})
+add_executable(FickerEngine ${ALL_SRC})
 
 target_include_directories(FickerEngine PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/engine
+    "${CMAKE_SOURCE_DIR}/engine"
 )
 
 # --------------------------------------------------------------------------------------
 # Web build (Emscripten)
 # --------------------------------------------------------------------------------------
-if(EMSCRIPTEN OR BUILD_WEB)
+if(EMSCRIPTEN)
     message(STATUS "Configuring for WebAssembly (Emscripten)")
 
     target_compile_definitions(FickerEngine PRIVATE
@@ -43,21 +41,20 @@ if(EMSCRIPTEN OR BUILD_WEB)
         FE_WEB=1
     )
 
-    # Emit an HTML launcher.
-    set_target_properties(FickerEngine PROPERTIES SUFFIX ".html")
-
     # IMPORTANT:
-    # - We use LEGACY_GL_EMULATION (fixed-function style).
-    # - DO NOT enable FULL_ES2 at the same time (it conflicts and crashes link).
+    # - LEGACY_GL_EMULATION provides fixed-function style APIs (glVertexPointer etc).
+    # - Do NOT combine it with -sFULL_ES2=1 (Emscripten asserts).
     target_link_options(FickerEngine PRIVATE
+        "-sASYNCIFY"
+        "-sALLOW_MEMORY_GROWTH=1"
+        "-sASSERTIONS=1"
         "-sUSE_WEBGL2=1"
         "-sMIN_WEBGL_VERSION=2"
         "-sMAX_WEBGL_VERSION=2"
         "-sLEGACY_GL_EMULATION=1"
-        "-sALLOW_MEMORY_GROWTH=1"
-        "-sASYNCIFY"
-        "-sASSERTIONS=1"
     )
+
+    set_target_properties(FickerEngine PROPERTIES SUFFIX ".html")
 
 else()
     message(STATUS "Configuring native build")
