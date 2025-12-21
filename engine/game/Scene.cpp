@@ -10,9 +10,13 @@ void Scene::update(float /*dt*/) {
   // TODO: camera movement / physics later
 }
 
-void Scene::render(const Mat4& /*view*/, const Mat4& /*proj*/) {
-  // TODO: draw your main scene objects here
+void Scene::render(const Mat4& view, const Mat4& proj) {
+    (void)view;
+    (void)proj;
+
+    // draw stuff (same code as before)
 }
+
 
 void Scene::renderDebug(const Mat4& /*view*/, const Mat4& /*proj*/) {
   // TODO: draw grid / marker debug here

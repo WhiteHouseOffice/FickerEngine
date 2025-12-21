@@ -1,17 +1,16 @@
 #pragma once
 
-#include "math/MiniMath.h"   // Mat4, Vec3 etc (whatever your engine uses)
+#include "math/MiniMath.h"
 
 class Scene {
 public:
-  void init();
-  Scene() = default;
+    virtual ~Scene() = default;
 
-  // Engine expects these:
-  void update(float dt);
-  void render(const Mat4& view, const Mat4& proj);
-  void renderDebug(const Mat4& view, const Mat4& proj);
+    // Lifecycle
+    virtual void init() {}
+    virtual void update(float /*dt*/) {}
 
-  // Optional compatibility wrapper (so other code calling render() still works)
-  void render() { render(Mat4::identity(), Mat4::identity()); }
+    // Rendering
+    virtual void render(const Mat4& /*view*/, const Mat4& /*proj*/) {}
+    virtual void renderDebug(const Mat4& /*view*/, const Mat4& /*proj*/) {}
 };
