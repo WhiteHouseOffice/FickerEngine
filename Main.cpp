@@ -6,7 +6,28 @@
 #include "core/Engine.h"
 #include "core/Input.h"
 
-static bool g_mouseCaptured = false;
+static bool g_captured = false;
+
+static void SetCaptured(GLFWwindow* window, bool captured) {
+  g_captured = captured;
+
+  if (captured) {
+    // TRUE pointer lock / grab
+    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+
+    // Optional but nice if supported
+    if (glfwRawMouseMotionSupported()) {
+      glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, GLFW_TRUE);
+    }
+
+    // Prevent a huge first delta
+    Input::resetAll();
+  } else {
+    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+    glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, GLFW_FALSE);
+    Input::resetAll();
+  }
+}
 
 static void PollMovementKeys(GLFWwindow* window) {
   Input::setKey(Input::KEY_W, glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS);
@@ -15,42 +36,21 @@ static void PollMovementKeys(GLFWwindow* window) {
   Input::setKey(Input::KEY_D, glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS);
 }
 
-static void SetMouseCaptured(GLFWwindow* window, bool captured) {
-  g_mouseCaptured = captured;
-
-  if (captured) {
-    // IMPORTANT:
-    // Use HIDDEN (not DISABLED). On some setups DISABLED breaks GetCursorPos/SetCursorPos
-    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_HIDDEN);
-  } else {
-    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
-  }
-
-  Input::resetAll();
-
-  // Recenter immediately so first delta is zero
-  int w = 0, h = 0;
-  glfwGetWindowSize(window, &w, &h);
-  glfwSetCursorPos(window, w * 0.5, h * 0.5);
-}
-
 static void glfw_window_close_callback(GLFWwindow* window) {
   glfwSetWindowShouldClose(window, GLFW_TRUE);
 }
 
 static void glfw_mouse_button_callback(GLFWwindow* window, int button, int action, int /*mods*/) {
   if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_PRESS) {
-    if (!g_mouseCaptured) SetMouseCaptured(window, true);
+    if (!g_captured) SetCaptured(window, true);
   }
 }
 
 static void glfw_key_callback(GLFWwindow* window, int key, int /*scancode*/, int action, int /*mods*/) {
   if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS) {
-    if (g_mouseCaptured) {
-      SetMouseCaptured(window, false);
-    } else {
-      glfwSetWindowShouldClose(window, GLFW_TRUE);
-    }
+    // ESC releases capture; press ESC again (when released) to quit
+    if (g_captured) SetCaptured(window, false);
+    else glfwSetWindowShouldClose(window, GLFW_TRUE);
     return;
   }
 
@@ -73,11 +73,17 @@ static void glfw_key_callback(GLFWwindow* window, int key, int /*scancode*/, int
 }
 
 static void glfw_focus_callback(GLFWwindow* window, int focused) {
-  if (!focused && g_mouseCaptured) {
-    // don’t get stuck captured when alt-tabbing
-    SetMouseCaptured(window, false);
-  }
+  // If we lose focus, auto-release so you never get stuck
+  if (!focused && g_captured) SetCaptured(window, false);
   Input::resetAll();
+}
+
+// This is the important one:
+// In CURSOR_DISABLED mode GLFW gives us *virtual* cursor positions.
+// We treat them as a stream and compute deltas.
+static void glfw_cursor_pos_callback(GLFWwindow* /*window*/, double x, double y) {
+  if (!g_captured) return;
+  Input::onMouseMove(x, y);
 }
 
 int main() {
@@ -104,38 +110,18 @@ int main() {
   glfwSetMouseButtonCallback(window, glfw_mouse_button_callback);
   glfwSetKeyCallback(window, glfw_key_callback);
   glfwSetWindowFocusCallback(window, glfw_focus_callback);
+  glfwSetCursorPosCallback(window, glfw_cursor_pos_callback);
 
   glEnable(GL_DEPTH_TEST);
 
   Engine::instance().init();
 
-  // start released; click to capture
-  SetMouseCaptured(window, false);
+  // Start released; click to capture
+  SetCaptured(window, false);
 
   while (!glfwWindowShouldClose(window)) {
     glfwPollEvents();
     PollMovementKeys(window);
-
-    // RELATIVE MOUSE BY RECENTERING (works reliably with GLFW_CURSOR_HIDDEN)
-    if (g_mouseCaptured) {
-      int w = 0, h = 0;
-      glfwGetWindowSize(window, &w, &h);
-      const double cx = w * 0.5;
-      const double cy = h * 0.5;
-
-      double mx = cx, my = cy;
-      glfwGetCursorPos(window, &mx, &my);
-
-      const float dx = static_cast<float>(mx - cx);
-      const float dy = static_cast<float>(my - cy);
-
-      // Only feed if there’s actual movement
-      if (dx != 0.0f || dy != 0.0f) {
-        Input::addMouseDelta(dx, dy);
-      }
-
-      glfwSetCursorPos(window, cx, cy);
-    }
 
     glClearColor(0.1f, 0.2f, 0.35f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
