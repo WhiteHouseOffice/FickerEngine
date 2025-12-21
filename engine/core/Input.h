@@ -17,13 +17,13 @@ public:
   static void init();
   static void shutdown();
 
-  static bool isKeyDown(Key key);
-  static void getMouseDelta(float& dx, float& dy);
+  static void resetAll();
 
   static void setKey(Key key, bool down);
+  static bool isKeyDown(Key key);
 
-  // Called by platform layer (Main.cpp)
-  static void addMouseDelta(float dx, float dy);
-
-  static void resetAll();
+  // Mouse
+  static void onMouseMove(double x, double y);  // <- ADD
+  static void resetMouse();                     // <- ADD
+  static void getMouseDelta(float& dx, float& dy);
 };

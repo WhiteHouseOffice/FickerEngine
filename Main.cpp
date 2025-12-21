@@ -8,32 +8,28 @@
 
 static bool g_captured = false;
 
-static void SetCaptured(GLFWwindow* window, bool captured) {
-  g_captured = captured;
-
-  if (captured) {
-    // TRUE pointer lock / grab
-    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
-
-    // Optional but nice if supported
-    if (glfwRawMouseMotionSupported()) {
-      glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, GLFW_TRUE);
-    }
-
-    // Prevent a huge first delta
-    Input::resetAll();
-  } else {
-    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
-    glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, GLFW_FALSE);
-    Input::resetAll();
-  }
-}
-
 static void PollMovementKeys(GLFWwindow* window) {
   Input::setKey(Input::KEY_W, glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS);
   Input::setKey(Input::KEY_A, glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS);
   Input::setKey(Input::KEY_S, glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS);
   Input::setKey(Input::KEY_D, glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS);
+}
+
+static void SetCaptured(GLFWwindow* window, bool captured) {
+  g_captured = captured;
+
+  if (captured) {
+    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+    if (glfwRawMouseMotionSupported()) {
+      glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, GLFW_TRUE);
+    }
+  } else {
+    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+    glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, GLFW_FALSE);
+  }
+
+  // Avoid huge first delta after toggling capture
+  Input::resetMouse();
 }
 
 static void glfw_window_close_callback(GLFWwindow* window) {
@@ -48,7 +44,6 @@ static void glfw_mouse_button_callback(GLFWwindow* window, int button, int actio
 
 static void glfw_key_callback(GLFWwindow* window, int key, int /*scancode*/, int action, int /*mods*/) {
   if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS) {
-    // ESC releases capture; press ESC again (when released) to quit
     if (g_captured) SetCaptured(window, false);
     else glfwSetWindowShouldClose(window, GLFW_TRUE);
     return;
@@ -73,14 +68,10 @@ static void glfw_key_callback(GLFWwindow* window, int key, int /*scancode*/, int
 }
 
 static void glfw_focus_callback(GLFWwindow* window, int focused) {
-  // If we lose focus, auto-release so you never get stuck
   if (!focused && g_captured) SetCaptured(window, false);
   Input::resetAll();
 }
 
-// This is the important one:
-// In CURSOR_DISABLED mode GLFW gives us *virtual* cursor positions.
-// We treat them as a stream and compute deltas.
 static void glfw_cursor_pos_callback(GLFWwindow* /*window*/, double x, double y) {
   if (!g_captured) return;
   Input::onMouseMove(x, y);
