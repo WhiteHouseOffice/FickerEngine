@@ -9,61 +9,112 @@ static float clampf(float v, float lo, float hi) {
   return (v < lo) ? lo : (v > hi) ? hi : v;
 }
 
-// Build forward/right from yaw/pitch
 static Vec3 forwardFromYawPitch(float yaw, float pitch) {
-  // yaw around Y, pitch around X
   const float cy = std::cos(yaw);
   const float sy = std::sin(yaw);
   const float cp = std::cos(pitch);
   const float sp = std::sin(pitch);
-
-  // Forward: (sinYaw*cosPitch, sinPitch, cosYaw*cosPitch)
   return normalize(Vec3(sy * cp, sp, cy * cp));
 }
 
+// Sphere vs plane y=0: push sphere up if below plane
+static bool resolveSphereGround(Vec3& pos, Vec3& vel, float radius) {
+  const float groundY = 0.0f;
+  const float bottom = pos.y - radius;
+  if (bottom < groundY) {
+    pos.y += (groundY - bottom);
+    if (vel.y < 0.0f) vel.y = 0.0f;
+    return true;
+  }
+  return false;
+}
+
+// Sphere vs AABB: find closest point, push out along minimal penetration
+static bool resolveSphereAABB(Vec3& pos, Vec3& vel, float r, const Game::AABB& b) {
+  // Closest point on box to sphere center
+  const float cx = clampf(pos.x, b.min.x, b.max.x);
+  const float cy = clampf(pos.y, b.min.y, b.max.y);
+  const float cz = clampf(pos.z, b.min.z, b.max.z);
+  const Vec3 closest(cx, cy, cz);
+
+  Vec3 d = pos - closest;
+  const float dist2 = dot(d, d);
+  if (dist2 > r * r) return false;
+
+  float dist = std::sqrt(dist2);
+  // If center is inside box (dist==0), choose an axis to push out
+  Vec3 n(0, 1, 0);
+  if (dist > 1e-6f) {
+    n = d * (1.0f / dist);
+  } else {
+    // pick the smallest penetration axis
+    const float px = std::min(std::abs(pos.x - b.min.x), std::abs(b.max.x - pos.x));
+    const float py = std::min(std::abs(pos.y - b.min.y), std::abs(b.max.y - pos.y));
+    const float pz = std::min(std::abs(pos.z - b.min.z), std::abs(b.max.z - pos.z));
+    if (py <= px && py <= pz) n = Vec3(0, (pos.y > (b.min.y + b.max.y) * 0.5f) ? 1.0f : -1.0f, 0);
+    else if (px <= pz)       n = Vec3((pos.x > (b.min.x + b.max.x) * 0.5f) ? 1.0f : -1.0f, 0, 0);
+    else                     n = Vec3(0, 0, (pos.z > (b.min.z + b.max.z) * 0.5f) ? 1.0f : -1.0f);
+    dist = 0.0f;
+  }
+
+  const float penetration = r - dist;
+  pos += n * penetration;
+
+  // Kill velocity into the surface
+  const float vn = dot(vel, n);
+  if (vn < 0.0f) vel -= n * vn;
+
+  return true;
+}
+
 void Game::init() {
-  // Nothing else needed; m_pos defaults are fine.
+  // Build a tiny “world” of platforms (invisible for now, but collidable)
+  m_platformCount = 0;
+
+  // Platform 1: a low box near origin
+  m_platforms[m_platformCount++] = AABB{ Vec3(-2.0f, 0.5f, -2.0f), Vec3( 2.0f, 0.8f,  2.0f) };
+
+  // Platform 2: a higher small box
+  m_platforms[m_platformCount++] = AABB{ Vec3( 3.0f, 1.2f, -1.0f), Vec3( 4.5f, 1.5f,  1.0f) };
+
+  // Platform 3: a ramp-ish stair step (still AABB)
+  m_platforms[m_platformCount++] = AABB{ Vec3(-4.0f, 0.2f,  3.0f), Vec3(-2.5f, 0.6f,  5.0f) };
 }
 
 void Game::update(float dt) {
-  // ---- Fly toggle on F press (edge-trigger) ----
+  // Toggle fly mode (F edge-trigger)
   const bool fDown = Input::isKeyDown(Input::KEY_F);
   if (fDown && !m_prevFToggle) {
     m_flyMode = !m_flyMode;
-    // When entering fly mode, kill vertical velocity so it feels clean.
     if (m_flyMode) {
-      m_velY = 0.0f;
+      m_vel = Vec3(0,0,0);
       m_onGround = false;
     }
     printf("FlyMode: %s\n", m_flyMode ? "ON" : "OFF");
   }
   m_prevFToggle = fDown;
 
-  // ---- Mouse look ----
+  // Mouse look
   float mdx = 0.0f, mdy = 0.0f;
   Input::getMouseDelta(mdx, mdy);
 
   m_yaw   += mdx * m_mouseSens;
-  m_pitch += -mdy * m_mouseSens; // invert so mouse up looks up
-
-  // Clamp pitch to avoid flipping
-  const float pitchLimit = 1.55334f; // ~89 degrees
+  m_pitch += -mdy * m_mouseSens;
+  const float pitchLimit = 1.55334f;
   m_pitch = clampf(m_pitch, -pitchLimit, pitchLimit);
 
-  const Vec3 up = Vec3(0.0f, 1.0f, 0.0f);
-
+  const Vec3 up(0,1,0);
   const Vec3 fwd = forwardFromYawPitch(m_yaw, m_pitch);
-  Vec3 right = normalize(cross(fwd, up));
+  const Vec3 right = normalize(cross(fwd, up));
 
-  // ---- Speed ----
   float speed = m_flyMode ? m_flySpeed : m_walkSpeed;
   if (Input::isKeyDown(Input::KEY_SHIFT)) speed *= m_sprintMul;
 
-  // ---- Movement intent ----
-  Vec3 move(0.0f, 0.0f, 0.0f);
+  // Movement intent
+  Vec3 move(0,0,0);
 
   if (m_flyMode) {
-    // Fly mode: move in true camera forward/right; Space up; Ctrl down
+    // Free movement: WASD in camera direction + Space/Ctrl vertical
     if (Input::isKeyDown(Input::KEY_W)) move += fwd;
     if (Input::isKeyDown(Input::KEY_S)) move -= fwd;
     if (Input::isKeyDown(Input::KEY_A)) move -= right;
@@ -77,11 +128,11 @@ void Game::update(float dt) {
       m_pos += move * (speed * dt);
     }
 
-    // No gravity in fly mode
-    m_velY = 0.0f;
+    // No gravity / no collision in fly mode (as you said: going below 0 is OK)
+    m_vel = Vec3(0,0,0);
     m_onGround = false;
   } else {
-    // Walk mode: project movement onto ground plane so W/A/S/D never changes Y
+    // Walk: project movement onto XZ so W doesn't change Y
     Vec3 fwdFlat(fwd.x, 0.0f, fwd.z);
     if (length(fwdFlat) > 0.0001f) fwdFlat = normalize(fwdFlat);
     Vec3 rightFlat = normalize(cross(fwdFlat, up));
@@ -96,37 +147,48 @@ void Game::update(float dt) {
       m_pos += move * (speed * dt);
     }
 
-    // ---- Jump ----
+    // Jump (only when grounded)
     if (m_onGround && Input::isKeyDown(Input::KEY_SPACE)) {
-      m_velY = m_jumpSpeed;
+      m_vel.y = m_jumpSpeed;
       m_onGround = false;
     }
 
-    // ---- Gravity + ground collision ----
-    m_velY -= m_gravity * dt;
-    m_pos.y += m_velY * dt;
+    // Gravity
+    m_vel.y -= m_gravity * dt;
 
-    if (m_pos.y <= m_groundY) {
-      m_pos.y = m_groundY;
-      m_velY = 0.0f;
-      m_onGround = true;
-    } else {
-      m_onGround = false;
-      // Optional: if you want Ctrl to “fall faster” while airborne (Minecraft-ish):
-      if (Input::isKeyDown(Input::KEY_CTRL)) {
-        m_velY -= (m_gravity * 1.5f) * dt;
+    // Integrate
+    m_pos += m_vel * dt;
+
+    // Collide with ground + platforms
+    bool groundedNow = false;
+
+    // Ground plane y=0
+    groundedNow |= resolveSphereGround(m_pos, m_vel, m_radius);
+
+    // Platforms
+    for (int i = 0; i < m_platformCount; ++i) {
+      // If we resolve against a platform and the normal is upward-ish, treat as grounded.
+      Vec3 before = m_pos;
+      bool hit = resolveSphereAABB(m_pos, m_vel, m_radius, m_platforms[i]);
+      if (hit) {
+        // If we moved upward to resolve, assume we landed
+        if (m_pos.y > before.y + 1e-4f) groundedNow = true;
       }
+    }
+
+    m_onGround = groundedNow;
+
+    // Optional: Ctrl = “fall faster” while airborne (Minecraft-ish)
+    if (!m_onGround && Input::isKeyDown(Input::KEY_CTRL)) {
+      m_vel.y -= (m_gravity * 1.5f) * dt;
     }
   }
 
-  // Debug print (matches what you saw earlier)
   printf("pos: %.2f, %.2f, %.2f\n", m_pos.x, m_pos.y, m_pos.z);
 }
 
 Mat4 Game::view() const {
   const Vec3 fwd = forwardFromYawPitch(m_yaw, m_pitch);
   const Vec3 target = m_pos + fwd;
-
-  // MiniMath usually provides lookAt(). If yours doesn't, tell me and I’ll adapt.
-  return lookAt(m_pos, target, Vec3(0.0f, 1.0f, 0.0f));
+  return lookAt(m_pos, target, Vec3(0,1,0));
 }
