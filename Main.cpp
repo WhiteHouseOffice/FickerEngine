@@ -4,6 +4,24 @@
 #include <GL/gl.h>
 
 #include "core/Engine.h"
+#include "core/Input.h"
+
+// GLFW key callback -> forward into engine Input
+static void glfw_key_callback(GLFWwindow* /*window*/, int key, int /*scancode*/, int action, int /*mods*/) {
+  const bool down = (action != GLFW_RELEASE);
+
+  // TODO: map GLFW key codes to your engine keys.
+  // Temporary: forward WASD only (expand later)
+  switch (key) {
+    case GLFW_KEY_W: Input::setKey('W', down); break;
+    case GLFW_KEY_A: Input::setKey('A', down); break;
+    case GLFW_KEY_S: Input::setKey('S', down); break;
+    case GLFW_KEY_D: Input::setKey('D', down); break;
+    case GLFW_KEY_SPACE: Input::setKey(' ', down); break;
+    case GLFW_KEY_LEFT_CONTROL: Input::setKey(0x11, down); break; // example
+    default: break;
+  }
+}
 
 int main() {
   if (!glfwInit()) {
@@ -21,8 +39,11 @@ int main() {
   }
 
   glfwMakeContextCurrent(window);
-  glfwSwapInterval(1); // vsync
+  glfwSwapInterval(1);
   glEnable(GL_DEPTH_TEST);
+
+  // Hook input callbacks
+  glfwSetKeyCallback(window, glfw_key_callback);
 
   Engine::instance().init();
 
@@ -37,7 +58,6 @@ int main() {
   }
 
   Engine::instance().shutdown();
-
   glfwDestroyWindow(window);
   glfwTerminate();
   return 0;
