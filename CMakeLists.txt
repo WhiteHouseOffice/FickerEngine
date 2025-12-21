@@ -27,6 +27,7 @@ list(REMOVE_DUPLICATES SOURCES)
 
 add_executable(FickerEngine ${SOURCES})
 
+# Allow includes like:  #include "render/RenderMesh.h"
 target_include_directories(FickerEngine PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/engine
 )
@@ -35,10 +36,10 @@ target_include_directories(FickerEngine PRIVATE
 # Emscripten / Web build
 # --------------------------------------------------------------------------------------
 if (EMSCRIPTEN)
-    message(STATUS "Configuring for WebAssembly (Emscripten + WebGPU)")
+    message(STATUS "Configuring for WebAssembly (Emscripten)")
 
-    # We are the web build
-    target_compile_definitions(FickerEngine PRIVATE ENGINE_WEB=1
+    target_compile_definitions(FickerEngine PRIVATE
+        ENGINE_WEB=1
         FE_WEB=1
         FE_WEBGPU=1
     )
@@ -48,26 +49,22 @@ if (EMSCRIPTEN)
         SUFFIX ".html"
     )
 
-    # Emscripten link options:
-    "-sUSE_WEBGL2=1"
-    "-sFULL_ES2=1"
-    "-sLEGACY_GL_EMULATION=1"
-    "-sALLOW_MEMORY_GROWTH=1"
-    "--shell-file" "${CMAKE_SOURCE_DIR}/shell.html" # optional, only if you have it
-    #  -sASSERTIONS       : runtime checks in debug builds
+    # IMPORTANT:
+    # All Emscripten flags must be inside target_link_options().
+    # Bare quoted strings (e.g. "-sUSE_WEBGL2=1" on its own line) cause a CMake parse error.
     target_link_options(FickerEngine PRIVATE
-    #"-sUSE_WEBGPU"
-    "-sASYNCIFY"
-    "-sALLOW_MEMORY_GROWTH=1"
-    "-sASSERTIONS=1"
-    "-sLEGACY_GL_EMULATION=1"
-    "-sUSE_WEBGL2=1"
-    "-sMIN_WEBGL_VERSION=2"
-    "-sMAX_WEBGL_VERSION=2"
-    "-sGL_UNSAFE_OPTS=0"
+        "-sASYNCIFY"
+        "-sALLOW_MEMORY_GROWTH=1"
+        "-sASSERTIONS=1"
 
+        # Legacy/WebGL backend support (no shader files / fixed-function emulation)
+        "-sLEGACY_GL_EMULATION=1"
+        "-sUSE_WEBGL2=1"
+        "-sMIN_WEBGL_VERSION=2"
+        "-sMAX_WEBGL_VERSION=2"
+        "-sGL_UNSAFE_OPTS=0"
 
-        # If you want custom shell / pre.js again, uncomment:
+        # If you have custom shell/pre-js, uncomment and make sure the files exist:
         # "--pre-js=${CMAKE_CURRENT_SOURCE_DIR}/runtime/pre.js"
         # "--shell-file=${CMAKE_CURRENT_SOURCE_DIR}/runtime/shell.html"
     )
