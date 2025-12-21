@@ -6,93 +6,141 @@
 #include "math/MiniMath.h"
 
 static float clampf(float v, float lo, float hi) {
-  return (v < lo) ? lo : (v > hi) ? hi : v;
+    return (v < lo) ? lo : (v > hi) ? hi : v;
 }
 
 static Vec3 forwardFromYawPitch(float yaw, float pitch) {
-  const float cy = std::cos(yaw);
-  const float sy = std::sin(yaw);
-  const float cp = std::cos(pitch);
-  const float sp = std::sin(pitch);
-  return normalize(Vec3(sy * cp, sp, cy * cp));
+    const float cy = std::cos(yaw);
+    const float sy = std::sin(yaw);
+    const float cp = std::cos(pitch);
+    const float sp = std::sin(pitch);
+    return normalize(Vec3(sy * cp, sp, cy * cp));
 }
 
+/* ====================== COLLISION HELPERS ====================== */
+
+static bool resolveSphereGround(Vec3& center, Vec3& vel, float radius) {
+    const float bottom = center.y - radius;
+    if (bottom < 0.0f) {
+        center.y -= bottom;
+        if (vel.y < 0.0f) vel.y = 0.0f;
+        return true;
+    }
+    return false;
+}
+
+static bool resolveSphereAABB(Vec3& center, Vec3& vel, float r, const AABB& b) {
+    const float cx = clampf(center.x, b.min.x, b.max.x);
+    const float cy = clampf(center.y, b.min.y, b.max.y);
+    const float cz = clampf(center.z, b.min.z, b.max.z);
+    Vec3 closest(cx, cy, cz);
+
+    Vec3 d = center - closest;
+    float dist2 = dot(d, d);
+    if (dist2 > r * r) return false;
+
+    float dist = std::sqrt(dist2);
+    Vec3 n(0, 1, 0);
+
+    if (dist > 1e-6f) {
+        n = d * (1.0f / dist);
+    }
+
+    float penetration = r - dist;
+    center += n * penetration;
+
+    float vn = dot(vel, n);
+    if (vn < 0.0f) vel -= n * vn;
+
+    return true;
+}
+
+/* ====================== GAME ====================== */
+
 void Game::init() {
-  m_flyMode = false;
-  m_prevFToggle = false;
-  m_onGround = true;
-  m_velY = 0.0f;
+    m_pos = Vec3(0.0f, 0.0f, 5.0f);
+    m_vel = Vec3(0.0f, 0.0f, 0.0f);
+    m_onGround = true;
 
-  // Start standing on ground
-  m_pos = Vec3(0.0f, 0.0f, 5.0f);
-  m_yaw = 3.14159265f;
-  m_pitch = 0.0f;
+    m_yaw = 3.14159265f;
+    m_pitch = 0.0f;
 
-  printf("[Game] init (WALK)\n");
+    m_flyMode = false;
+    m_prevFToggle = false;
+
+    /* Platforms (must match Scene debug draw) */
+    m_platformCount = 0;
+    m_platforms[m_platformCount++] = AABB{
+        Vec3(-2.0f, 0.5f, -2.0f),
+        Vec3( 2.0f, 0.8f,  2.0f)
+    };
+    m_platforms[m_platformCount++] = AABB{
+        Vec3( 3.0f, 1.2f, -1.0f),
+        Vec3( 4.5f, 1.5f,  1.0f)
+    };
+    m_platforms[m_platformCount++] = AABB{
+        Vec3(-4.0f, 0.2f,  3.0f),
+        Vec3(-2.5f, 0.6f,  5.0f)
+    };
+
+    printf("[Game] init WALK\n");
 }
 
 void Game::update(float dt) {
-  // Toggle fly mode (F edge-trigger)
-  const bool fDown = Input::isKeyDown(Input::KEY_F);
-  if (fDown && !m_prevFToggle) {
-    m_flyMode = !m_flyMode;
-    m_velY = 0.0f;
-    m_onGround = !m_flyMode;
-    printf("[mode] %s\n", m_flyMode ? "FLY" : "WALK");
-  }
-  m_prevFToggle = fDown;
+    /* ---------- MODE TOGGLE ---------- */
+    bool fDown = Input::isKeyDown(Input::KEY_F);
+    if (fDown && !m_prevFToggle) {
+        m_flyMode = !m_flyMode;
+        m_vel = Vec3(0,0,0);
+        m_onGround = !m_flyMode;
+        printf("[mode] %s\n", m_flyMode ? "FLY" : "WALK");
+    }
+    m_prevFToggle = fDown;
 
-  // --- Mouse look (stabilized) ---
-  float mdx = 0.0f, mdy = 0.0f;
-  Input::getMouseDelta(mdx, mdy);
+    /* ---------- MOUSE LOOK ---------- */
+    float mdx = 0.0f, mdy = 0.0f;
+    Input::getMouseDelta(mdx, mdy);
 
-  // Clamp crazy deltas so one bad frame doesn't pin pitch
-  const float clampDelta = 50.0f;
-  if (mdx >  clampDelta) mdx =  clampDelta;
-  if (mdx < -clampDelta) mdx = -clampDelta;
-  if (mdy >  clampDelta) mdy =  clampDelta;
-  if (mdy < -clampDelta) mdy = -clampDelta;
+    const float clampDelta = 25.0f;
+    mdx = clampf(mdx, -clampDelta, clampDelta);
+    mdy = clampf(mdy, -clampDelta, clampDelta);
 
-  m_yaw += mdx * m_mouseSens;
+    m_yaw   += mdx * m_mouseSens;
+    m_pitch += (-mdy) * m_mouseSens;   // mouse up = look up
 
-  // IMPORTANT:
-  // This sign fixes your "only look down" issue on your current setup.
-  // If you want inverted later, we can expose a flag.
-  m_pitch += (mdy) * m_mouseSens;
+    const float pitchLimit = 1.55334f;
+    m_pitch = clampf(m_pitch, -pitchLimit, pitchLimit);
 
-  const float pitchLimit = 1.55334f; // ~89 degrees
-  m_pitch = clampf(m_pitch, -pitchLimit, pitchLimit);
+    /* ---------- BASIS ---------- */
+    const Vec3 up(0,1,0);
+    const Vec3 fwd = forwardFromYawPitch(m_yaw, m_pitch);
+    const Vec3 right = normalize(cross(fwd, up));
 
-  // Basis
-  const Vec3 up(0,1,0);
-  const Vec3 fwd = forwardFromYawPitch(m_yaw, m_pitch);
-  const Vec3 right = normalize(cross(fwd, up));
+    float speed = m_flyMode ? m_flySpeed : m_walkSpeed;
+    if (Input::isKeyDown(Input::KEY_SHIFT)) speed *= m_sprintMul;
 
-  float speed = m_flyMode ? m_flySpeed : m_walkSpeed;
-  if (Input::isKeyDown(Input::KEY_SHIFT)) speed *= m_sprintMul;
+    Vec3 move(0,0,0);
 
-  Vec3 move(0,0,0);
+    /* ---------- FLY MODE ---------- */
+    if (m_flyMode) {
+        if (Input::isKeyDown(Input::KEY_W)) move += fwd;
+        if (Input::isKeyDown(Input::KEY_S)) move -= fwd;
+        if (Input::isKeyDown(Input::KEY_A)) move -= right;
+        if (Input::isKeyDown(Input::KEY_D)) move += right;
+        if (Input::isKeyDown(Input::KEY_SPACE)) move += up;
+        if (Input::isKeyDown(Input::KEY_CTRL))  move -= up;
 
-  if (m_flyMode) {
-    // Fly: full camera direction, plus vertical controls
-    if (Input::isKeyDown(Input::KEY_W)) move += fwd;
-    if (Input::isKeyDown(Input::KEY_S)) move -= fwd;
-    if (Input::isKeyDown(Input::KEY_A)) move -= right;
-    if (Input::isKeyDown(Input::KEY_D)) move += right;
+        if (length(move) > 0.0001f) {
+            move = normalize(move);
+            m_pos += move * (speed * dt);
+        }
 
-    if (Input::isKeyDown(Input::KEY_SPACE)) move += up;
-    if (Input::isKeyDown(Input::KEY_CTRL))  move -= up;
-
-    if (length(move) > 0.0001f) {
-      move = normalize(move);
-      m_pos += move * (speed * dt);
+        m_vel = Vec3(0,0,0);
+        m_onGround = false;
+        return;
     }
 
-    // No ground clamping in fly mode (as you wanted)
-    m_velY = 0.0f;
-    m_onGround = false;
-  } else {
-    // Walk: project movement to XZ plane (prevents W affecting Y)
+    /* ---------- WALK MODE ---------- */
     Vec3 fwdFlat(fwd.x, 0.0f, fwd.z);
     if (length(fwdFlat) > 0.0001f) fwdFlat = normalize(fwdFlat);
     Vec3 rightFlat = normalize(cross(fwdFlat, up));
@@ -103,42 +151,37 @@ void Game::update(float dt) {
     if (Input::isKeyDown(Input::KEY_D)) move += rightFlat;
 
     if (length(move) > 0.0001f) {
-      move = normalize(move);
-      m_pos += move * (speed * dt);
+        move = normalize(move);
+        m_pos += move * (speed * dt);
     }
 
-    // Jump
+    Vec3 center = m_pos + Vec3(0.0f, m_radius, 0.0f);
+
     if (m_onGround && Input::isKeyDown(Input::KEY_SPACE)) {
-      m_velY = m_jumpSpeed;
-      m_onGround = false;
+        m_vel.y = m_jumpSpeed;
+        m_onGround = false;
     }
 
-    // Gravity + integrate
-    m_velY -= m_gravity * dt;
-    m_pos.y += m_velY * dt;
+    m_vel.y -= m_gravity * dt;
+    center.y += m_vel.y * dt;
 
-    // Ground plane at y=0 for FEET
-    if (m_pos.y <= 0.0f) {
-      m_pos.y = 0.0f;
-      m_velY = 0.0f;
-      m_onGround = true;
-    } else {
-      m_onGround = false;
+    bool groundedNow = false;
+    groundedNow |= resolveSphereGround(center, m_vel, m_radius);
 
-      // Optional: Ctrl makes you fall faster (Minecraft-ish)
-      if (Input::isKeyDown(Input::KEY_CTRL)) {
-        m_velY -= (m_gravity * 1.5f) * dt;
-      }
+    for (int i = 0; i < m_platformCount; ++i) {
+        Vec3 before = center;
+        if (resolveSphereAABB(center, m_vel, m_radius, m_platforms[i]) &&
+            center.y > before.y + 1e-4f) {
+            groundedNow = true;
+        }
     }
-  }
 
-  // Debug: show feet position + mode
-  printf("pos(feet): %.2f, %.2f, %.2f | %s\n", m_pos.x, m_pos.y, m_pos.z, m_flyMode ? "FLY" : "WALK");
+    m_pos = center - Vec3(0.0f, m_radius, 0.0f);
+    m_onGround = groundedNow;
 }
 
 Mat4 Game::view() const {
-  // Camera eye is above feet
-  const Vec3 eye = m_pos + Vec3(0.0f, m_eyeHeight, 0.0f);
-  const Vec3 fwd = forwardFromYawPitch(m_yaw, m_pitch);
-  return lookAt(eye, eye + fwd, Vec3(0,1,0));
+    Vec3 eye = m_pos + Vec3(0.0f, m_eyeHeight, 0.0f);
+    Vec3 fwd = forwardFromYawPitch(m_yaw, m_pitch);
+    return lookAt(eye, eye + fwd, Vec3(0,1,0));
 }
