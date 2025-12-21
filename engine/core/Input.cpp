@@ -13,15 +13,19 @@ namespace {
 }
 
 void Input::init() {
+  resetAll();
+}
+
+void Input::shutdown() {
+  // nothing for now
+}
+
+void Input::resetAll() {
   for (int i = 0; i < KEY_COUNT; ++i) g_keys[i] = false;
 
   g_mouseInit = false;
   g_lastX = g_lastY = 0.0;
   g_dx = g_dy = 0.0f;
-}
-
-void Input::shutdown() {
-  // nothing for now
 }
 
 bool Input::isKeyDown(Key key) {

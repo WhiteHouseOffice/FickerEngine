@@ -7,7 +7,9 @@
 #include "core/Input.h"
 
 static void glfw_key_callback(GLFWwindow* /*window*/, int key, int /*scancode*/, int action, int /*mods*/) {
-  const bool down = (action != GLFW_RELEASE);
+  // Only care about press/release (ignore repeat as separate event)
+  if (action != GLFW_PRESS && action != GLFW_RELEASE) return;
+  const bool down = (action == GLFW_PRESS);
 
   switch (key) {
     case GLFW_KEY_W: Input::setKey(Input::KEY_W, down); break;
@@ -39,13 +41,20 @@ static void glfw_cursor_pos_callback(GLFWwindow* /*window*/, double x, double y)
   Input::onMouseMove(x, y);
 }
 
+static void glfw_focus_callback(GLFWwindow* /*window*/, int focused) {
+  // If focus changes, clear stuck keys/mouse deltas.
+  // This fixes “walking forever” when release happens while unfocused.
+  (void)focused;
+  Input::resetAll();
+}
+
 int main() {
   if (!glfwInit()) {
     fprintf(stderr, "Failed to initialize GLFW\n");
     return -1;
   }
 
-  // Force legacy / compatibility GL so fixed-function (glBegin, glMatrixMode, glLoadMatrixf) works.
+  // Force legacy / compatibility GL so fixed-function draw works
   glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 2);
   glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 1);
   glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_ANY_PROFILE);
@@ -60,14 +69,19 @@ int main() {
   glfwMakeContextCurrent(window);
   glfwSwapInterval(1);
 
+  // Capture mouse inside the window (no visible cursor)
+  glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+
+  // Optional: raw mouse motion if supported (better feel)
+  if (glfwRawMouseMotionSupported()) {
+    glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, GLFW_TRUE);
+  }
+
   glfwSetKeyCallback(window, glfw_key_callback);
   glfwSetCursorPosCallback(window, glfw_cursor_pos_callback);
+  glfwSetWindowFocusCallback(window, glfw_focus_callback);
 
   glEnable(GL_DEPTH_TEST);
-
-  const GLubyte* ver = glGetString(GL_VERSION);
-  const GLubyte* ren = glGetString(GL_RENDERER);
-  printf("OpenGL: %s | %s\n", ver ? (const char*)ver : "?", ren ? (const char*)ren : "?");
 
   Engine::instance().init();
 

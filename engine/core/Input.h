@@ -10,7 +10,7 @@ public:
     KEY_SPACE,
     KEY_CTRL,
     KEY_SHIFT,
-    KEY_F,      // Fly toggle
+    KEY_F,
     KEY_COUNT
   };
 
@@ -23,4 +23,7 @@ public:
   // Platform adapters (called from Main.cpp / GLFW callbacks)
   static void setKey(Key key, bool down);
   static void onMouseMove(double x, double y);
+
+  // NEW: clear key + mouse state (used when window focus changes)
+  static void resetAll();
 };

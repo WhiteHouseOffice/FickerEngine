@@ -65,6 +65,11 @@ static bool resolveSphereAABB(Vec3& pos, Vec3& vel, float r, const AABB& b) {
 }
 
 void Game::init() {
+  m_flyMode = false;
+  m_prevFToggle = false;
+  m_onGround = false;
+  m_vel = Vec3(0,0,0);
+
   m_platformCount = 0;
   m_platforms[m_platformCount++] = AABB{ Vec3(-2.0f, 0.5f, -2.0f), Vec3( 2.0f, 0.8f,  2.0f) };
   m_platforms[m_platformCount++] = AABB{ Vec3( 3.0f, 1.2f, -1.0f), Vec3( 4.5f, 1.5f,  1.0f) };
@@ -72,6 +77,13 @@ void Game::init() {
 }
 
 void Game::update(float dt) {
+  static float s_printTimer = 0.0f;
+s_printTimer += dt;
+if (s_printTimer > 1.0f) {
+  s_printTimer = 0.0f;
+  printf("[mode] %s\n", m_flyMode ? "FLY" : "WALK");
+}
+
   // Fly toggle (F edge-trigger)
   const bool fDown = Input::isKeyDown(Input::KEY_F);
   if (fDown && !m_prevFToggle) {
@@ -88,7 +100,7 @@ void Game::update(float dt) {
   float mdx = 0.0f, mdy = 0.0f;
   Input::getMouseDelta(mdx, mdy);
   m_yaw   += mdx * m_mouseSens;
-  m_pitch += -mdy * m_mouseSens;
+  m_pitch += mdy * m_mouseSens;
 
   const float pitchLimit = 1.55334f;
   m_pitch = clampf(m_pitch, -pitchLimit, pitchLimit);
