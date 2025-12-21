@@ -95,6 +95,27 @@ void Game::update(float dt) {
     std::printf("[camera] pos = (%.2f, %.2f, %.2f)\n",
                 camPos.x, camPos.y, camPos.z);
   }
+  // ---- Gravity + ground collision ----
+m_velY -= m_gravity * dt;
+
+// Apply vertical velocity to your position
+position.y += m_velY * dt;   // <-- use your actual position variable name (pos/position/camPos)
+
+// Ground collision (simple plane at y = m_groundY)
+if (position.y <= m_groundY) {
+  position.y = m_groundY;
+  m_velY = 0.0f;
+  m_onGround = true;
+} else {
+  m_onGround = false;
+}
+
+// Jump (space)
+if (m_onGround && Input::isKeyDown(Input::KEY_SPACE)) {
+  m_velY = m_jumpSpeed;
+  m_onGround = false;
+}
+
 }
 
 Mat4 Game::view() const {
