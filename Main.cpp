@@ -6,25 +6,61 @@
 #include "core/Engine.h"
 #include "core/Input.h"
 
-// --- Callbacks ----------------------------------------------------
+static bool g_mouseCaptured = false;
 
+static void SetMouseCaptured(GLFWwindow* window, bool captured) {
+  g_mouseCaptured = captured;
+
+  if (captured) {
+    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+
+    // Raw mouse is nice when it works; safe to enable only if supported.
+    if (glfwRawMouseMotionSupported()) {
+      glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, GLFW_TRUE);
+    }
+
+    // Reset so the first delta after capture isn't huge / one-sided
+    Input::resetAll();
+  } else {
+    // Release cursor back to OS
+    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+
+    // Disable raw mouse motion if it was on
+    glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, GLFW_FALSE);
+
+    Input::resetAll();
+  }
+}
+
+// X button always closes
 static void glfw_window_close_callback(GLFWwindow* window) {
-  // Make the X button ALWAYS close the loop.
   glfwSetWindowShouldClose(window, GLFW_TRUE);
 }
 
+// Click inside window = capture mouse
+static void glfw_mouse_button_callback(GLFWwindow* window, int button, int action, int /*mods*/) {
+  if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_PRESS) {
+    if (!g_mouseCaptured) {
+      SetMouseCaptured(window, true);
+    }
+  }
+}
+
+// ESC = release mouse (and also allow quitting if you want)
 static void glfw_key_callback(GLFWwindow* window, int key, int /*scancode*/, int action, int /*mods*/) {
-  // ESC always exits (backup in case X is flaky)
   if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS) {
-    glfwSetWindowShouldClose(window, GLFW_TRUE);
+    if (g_mouseCaptured) {
+      SetMouseCaptured(window, false);
+    } else {
+      // If already released, ESC closes (optional, but convenient)
+      glfwSetWindowShouldClose(window, GLFW_TRUE);
+    }
     return;
   }
 
-  // Only care about press/release
   if (action != GLFW_PRESS && action != GLFW_RELEASE) return;
   const bool down = (action == GLFW_PRESS);
 
-  // Non-movement keys can be handled here
   switch (key) {
     case GLFW_KEY_SPACE: Input::setKey(Input::KEY_SPACE, down); break;
 
@@ -47,30 +83,26 @@ static void glfw_key_callback(GLFWwindow* window, int key, int /*scancode*/, int
 }
 
 static void glfw_cursor_pos_callback(GLFWwindow* /*window*/, double x, double y) {
+  // Only process deltas when captured (prevents weird drift when free)
+  if (!g_mouseCaptured) return;
   Input::onMouseMove(x, y);
 }
 
-static void glfw_focus_callback(GLFWwindow* /*window*/, int focused) {
-  // Reset on focus loss/gain so keys don't stick and mouse delta doesn't explode.
-  // BUT only do it when focus CHANGES.
-  (void)focused;
+static void glfw_focus_callback(GLFWwindow* window, int focused) {
+  // If we lose focus, release capture so you don't get stuck.
+  if (!focused && g_mouseCaptured) {
+    SetMouseCaptured(window, false);
+  }
+  // Clear states on focus change to avoid stuck keys
   Input::resetAll();
 }
 
-static void glfw_cursor_enter_callback(GLFWwindow* /*window*/, int entered) {
-  // When cursor re-enters, reset mouse accumulator so first delta isn't huge.
-  if (entered) Input::resetAll();
-}
-
 static void PollMovementKeys(GLFWwindow* window) {
-  // Polling avoids "stuck key" if a release event is missed.
   Input::setKey(Input::KEY_W, glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS);
   Input::setKey(Input::KEY_A, glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS);
   Input::setKey(Input::KEY_S, glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS);
   Input::setKey(Input::KEY_D, glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS);
 }
-
-// --- Main ---------------------------------------------------------
 
 int main() {
   if (!glfwInit()) {
@@ -78,7 +110,7 @@ int main() {
     return -1;
   }
 
-  // Legacy/compat OpenGL so fixed-function debug rendering works
+  // Legacy/compat OpenGL for fixed-function debug drawing
   glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 2);
   glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 1);
   glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_ANY_PROFILE);
@@ -93,35 +125,21 @@ int main() {
   glfwMakeContextCurrent(window);
   glfwSwapInterval(1);
 
-  // Hard-wire close behavior
   glfwSetWindowCloseCallback(window, glfw_window_close_callback);
-
-  // Input callbacks
   glfwSetKeyCallback(window, glfw_key_callback);
+  glfwSetMouseButtonCallback(window, glfw_mouse_button_callback);
   glfwSetCursorPosCallback(window, glfw_cursor_pos_callback);
   glfwSetWindowFocusCallback(window, glfw_focus_callback);
-  glfwSetCursorEnterCallback(window, glfw_cursor_enter_callback);
-
-  // Capture mouse (required for FPS-style looking)
-  glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
-
-  // Raw mouse is nice, but can be flaky in some setups; only enable if supported.
-  if (glfwRawMouseMotionSupported()) {
-    glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, GLFW_TRUE);
-  }
-
-  // IMPORTANT: Reset after capture so the first mouse delta isn't insane
-  Input::resetAll();
 
   glEnable(GL_DEPTH_TEST);
 
   Engine::instance().init();
 
-  while (!glfwWindowShouldClose(window)) {
-    // MUST pump events every frame for mouse + X button to work
-    glfwPollEvents();
+  // Start NOT captured: click inside to capture
+  SetMouseCaptured(window, false);
 
-    // Keep movement keys sane every frame
+  while (!glfwWindowShouldClose(window)) {
+    glfwPollEvents();
     PollMovementKeys(window);
 
     glClearColor(0.1f, 0.2f, 0.35f, 1.0f);
