@@ -2,6 +2,16 @@
 #include <vector>
 #include <cstdint>
 
+#if defined(FE_WEB) || defined(__EMSCRIPTEN__)
+  #include <GL/gl.h>
+#else
+  #if defined(__APPLE__)
+    #include <OpenGL/gl.h>
+  #else
+    #include <GL/gl.h>
+  #endif
+#endif
+
 namespace engine::render {
 
 class RenderMesh {
@@ -14,17 +24,18 @@ public:
     RenderMesh() = default;
     ~RenderMesh();
 
-    RenderMesh(const RenderMesh&) = delete;
-    RenderMesh& operator=(const RenderMesh&) = delete;
+    void Clear();
 
-    // Upload CPU data to GPU buffers (VBO/IBO). Safe to call multiple times; re-uploads.
+    // Upload vertex/index data and remember primitive type for Draw().
     void Upload(const std::vector<VertexPC>& vertices,
-                const std::vector<std::uint32_t>& indices);
+                const std::vector<std::uint32_t>& indices,
+                GLenum primitive);
 
-    // Draw with fixed-function emulation (LEGACY_GL_EMULATION).
+    // Uses the last primitive passed to Upload()
     void Draw() const;
 
-    void Clear();
+    // Explicit override if you want
+    void Draw(GLenum primitive) const;
 
     std::size_t VertexCount() const { return m_vertexCount; }
     std::size_t IndexCount()  const { return m_indexCount;  }
@@ -35,6 +46,8 @@ private:
 
     std::size_t m_vertexCount = 0;
     std::size_t m_indexCount  = 0;
+
+    GLenum m_primitive = GL_TRIANGLES;
 };
 
 } // namespace engine::render

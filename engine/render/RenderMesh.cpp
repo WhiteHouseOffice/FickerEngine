@@ -1,25 +1,12 @@
 #include "render/RenderMesh.h"
 
-#if defined(__EMSCRIPTEN__)
-  #include <GLES2/gl2.h>
-#else
-  // If you build native with a GL loader, include it here instead.
-  // For legacy desktop GL without a loader you can try:
-  #if defined(__APPLE__)
-    #include <OpenGL/gl.h>
-  #else
-    #include <GL/gl.h>
-  #endif
-#endif
-
 #include <cstring>
 
 namespace engine::render {
 
 static void DestroyBuffer(unsigned int& id) {
     if (id != 0) {
-        GLuint buf = static_cast<GLuint>(id);
-        glDeleteBuffers(1, &buf);
+        glDeleteBuffers(1, reinterpret_cast<GLuint*>(&id));
         id = 0;
     }
 }
@@ -32,11 +19,13 @@ void RenderMesh::Clear() {
     DestroyBuffer(m_vbo);
     DestroyBuffer(m_ibo);
     m_vertexCount = 0;
-    m_indexCount = 0;
+    m_indexCount  = 0;
 }
 
 void RenderMesh::Upload(const std::vector<VertexPC>& vertices,
-                        const std::vector<std::uint32_t>& indices) {
+                        const std::vector<std::uint32_t>& indices,
+                        GLenum primitive) {
+    m_primitive   = primitive;
     m_vertexCount = vertices.size();
     m_indexCount  = indices.size();
 
@@ -65,20 +54,23 @@ void RenderMesh::Upload(const std::vector<VertexPC>& vertices,
 }
 
 void RenderMesh::Draw() const {
+    Draw(m_primitive);
+}
+
+void RenderMesh::Draw(GLenum primitive) const {
     if (m_vbo == 0 || m_ibo == 0 || m_indexCount == 0) return;
 
     glBindBuffer(GL_ARRAY_BUFFER, static_cast<GLuint>(m_vbo));
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, static_cast<GLuint>(m_ibo));
 
-    // Fixed-function style pointers. With -sLEGACY_GL_EMULATION=1 Emscripten
-    // maps these to an internal shader pipeline for WebGL.
+    // Fixed-function client arrays (requires -sLEGACY_GL_EMULATION=1 on web)
     glEnableClientState(GL_VERTEX_ARRAY);
     glEnableClientState(GL_COLOR_ARRAY);
 
     glVertexPointer(3, GL_FLOAT, sizeof(VertexPC), reinterpret_cast<const void*>(0));
     glColorPointer(4, GL_FLOAT, sizeof(VertexPC), reinterpret_cast<const void*>(3 * sizeof(float)));
 
-    glDrawElements(GL_TRIANGLES,
+    glDrawElements(primitive,
                    static_cast<GLsizei>(m_indexCount),
                    GL_UNSIGNED_INT,
                    reinterpret_cast<const void*>(0));

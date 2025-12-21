@@ -1,74 +1,78 @@
 #include "game/Scene.h"
 
-#include "math/MiniMath.h"
-
-#if defined(FE_WEB)
+#if defined(FE_WEB) || defined(__EMSCRIPTEN__)
   #include <GL/gl.h>
 #endif
 
+using engine::render::RenderMesh;
+
+static std::vector<RenderMesh::VertexPC>
+MakeVerticesPC(const std::vector<Vec3>& positions, float r, float g, float b, float a) {
+  std::vector<RenderMesh::VertexPC> out;
+  out.reserve(positions.size());
+  for (const auto& p : positions) {
+    out.push_back(RenderMesh::VertexPC{ p.x, p.y, p.z, r, g, b, a });
+  }
+  return out;
+}
+
+static std::vector<std::uint32_t>
+MakeIndicesU32(const std::vector<int>& indices) {
+  std::vector<std::uint32_t> out;
+  out.reserve(indices.size());
+  for (int i : indices) out.push_back(static_cast<std::uint32_t>(i));
+  return out;
+}
+
 Scene::Scene() {
-  // Build simple debug geometry once: a ground grid and an origin marker.
   grid_.build(/*size*/ 10.0f, /*subdivisions*/ 20);
   marker_.build(/*size*/ 0.5f);
 }
 
-void Scene::init() {
-  // Copy CPU geometry into CPU-side "render meshes" once.
-  gridMesh_.uploadGrid(grid_);
-  markerMesh_.uploadMarker(marker_);
+void Scene::buildGroundQuad(float halfSize) {
+  // 2 triangles on XZ plane at y=0
+  std::vector<RenderMesh::VertexPC> v = {
+    {-halfSize, 0.f, -halfSize, 0.20f, 0.20f, 0.20f, 1.f},
+    { halfSize, 0.f, -halfSize, 0.20f, 0.20f, 0.20f, 1.f},
+    { halfSize, 0.f,  halfSize, 0.20f, 0.20f, 0.20f, 1.f},
+    {-halfSize, 0.f,  halfSize, 0.20f, 0.20f, 0.20f, 1.f},
+  };
+  std::vector<std::uint32_t> idx = {
+    0, 1, 2,
+    0, 2, 3
+  };
 
-  // One-time debug dump so we see counts but avoid per-frame spam.
-  gridMesh_.debugPrint("grid");
-  markerMesh_.debugPrint("marker");
+  groundMesh_.Upload(v, idx, GL_TRIANGLES);
+}
+
+void Scene::init() {
+  // Grid + marker as lines
+  auto gridV = MakeVerticesPC(grid_.positions, 0.55f, 0.55f, 0.55f, 1.f);
+  auto gridI = MakeIndicesU32(grid_.indices);
+  gridMesh_.Upload(gridV, gridI, GL_LINES);
+
+  auto markerV = MakeVerticesPC(marker_.positions, 1.f, 1.f, 1.f, 1.f);
+  auto markerI = MakeIndicesU32(marker_.indices);
+  markerMesh_.Upload(markerV, markerI, GL_LINES);
+
+  // Solid ground plane (walkable visual target)
+  buildGroundQuad(5.0f);
 }
 
 void Scene::update(float /*dt*/) {
-  // No scene-level simulation yet.
+  // no-op for now
 }
 
-void Scene::render(const Mat4& view, const Mat4& proj) {
-#if defined(FE_WEB)
-  // Basic fixed-function-style rendering via Emscripten's LEGACY_GL_EMULATION.
-  glEnable(GL_DEPTH_TEST);
-
-  // Background & clear
-  glClearColor(0.05f, 0.05f, 0.06f, 1.0f);
-  glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-  // Upload projection and view matrices.
-  glMatrixMode(GL_PROJECTION);
-  glLoadMatrixf(proj.m);
-
-  glMatrixMode(GL_MODELVIEW);
-  glLoadMatrixf(view.m);
-
-  glEnableClientState(GL_VERTEX_ARRAY);
-
-  // Draw ground grid as lines.
-  if (!gridMesh_.positions.empty() && !gridMesh_.indices.empty()) {
-    glVertexPointer(3, GL_FLOAT, sizeof(Vec3), gridMesh_.positions.data());
-    glDrawElements(GL_LINES,
-                   static_cast<GLsizei>(gridMesh_.indices.size()),
-                   GL_UNSIGNED_INT,
-                   gridMesh_.indices.data());
-  }
-
-  // Draw marker cross at the origin.
-  if (!markerMesh_.positions.empty() && !markerMesh_.indices.empty()) {
-    glVertexPointer(3, GL_FLOAT, sizeof(Vec3), markerMesh_.positions.data());
-    glDrawElements(GL_LINES,
-                   static_cast<GLsizei>(markerMesh_.indices.size()),
-                   GL_UNSIGNED_INT,
-                   markerMesh_.indices.data());
-  }
-
-  glDisableClientState(GL_VERTEX_ARRAY);
-#else
-  (void)view;
-  (void)proj;
+void Scene::render(const Mat4& /*view*/, const Mat4& /*proj*/) {
+#if defined(FE_WEB) || defined(__EMSCRIPTEN__)
+  // For now we ignore view/proj and just draw in legacy pipeline.
+  // Next step will be to apply transforms (camera) properly.
+  groundMesh_.Draw();
+  gridMesh_.Draw();
+  markerMesh_.Draw();
 #endif
 }
 
 void Scene::renderDebug(const Mat4& /*view*/, const Mat4& /*proj*/) {
-  // No per-frame logging here – keeps the console clean.
+  // keep clean for now
 }
