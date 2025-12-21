@@ -45,9 +45,12 @@ int main() {
     return -1;
   }
 
-  GLFWwindow* window =
-      glfwCreateWindow(1280, 720, "FickerEngine", nullptr, nullptr);
+  // Force legacy / compatibility GL so fixed-function (glBegin, glMatrixMode, glLoadMatrixf) works.
+  glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 2);
+  glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 1);
+  glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_ANY_PROFILE);
 
+  GLFWwindow* window = glfwCreateWindow(1280, 720, "FickerEngine", nullptr, nullptr);
   if (!window) {
     fprintf(stderr, "Failed to create GLFW window\n");
     glfwTerminate();
@@ -56,10 +59,15 @@ int main() {
 
   glfwMakeContextCurrent(window);
   glfwSwapInterval(1);
-  glEnable(GL_DEPTH_TEST);
 
   glfwSetKeyCallback(window, glfw_key_callback);
   glfwSetCursorPosCallback(window, glfw_cursor_pos_callback);
+
+  glEnable(GL_DEPTH_TEST);
+
+  const GLubyte* ver = glGetString(GL_VERSION);
+  const GLubyte* ren = glGetString(GL_RENDERER);
+  printf("OpenGL: %s | %s\n", ver ? (const char*)ver : "?", ren ? (const char*)ren : "?");
 
   Engine::instance().init();
 
