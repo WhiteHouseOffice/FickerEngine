@@ -40,3 +40,7 @@ Thumbs.db
 *.swp
 emsdk/
 emsdk/
+
+# build outputs
+build/
+webbuild/
