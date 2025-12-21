@@ -8,7 +8,6 @@
 
 static bool g_mouseCaptured = false;
 
-// Movement key polling avoids stuck keys
 static void PollMovementKeys(GLFWwindow* window) {
   Input::setKey(Input::KEY_W, glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS);
   Input::setKey(Input::KEY_A, glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS);
@@ -20,19 +19,16 @@ static void SetMouseCaptured(GLFWwindow* window, bool captured) {
   g_mouseCaptured = captured;
 
   if (captured) {
-    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
-    if (glfwRawMouseMotionSupported()) {
-      glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, GLFW_TRUE);
-    }
+    // IMPORTANT:
+    // Use HIDDEN (not DISABLED). On some setups DISABLED breaks GetCursorPos/SetCursorPos
+    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_HIDDEN);
   } else {
     glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
-    glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, GLFW_FALSE);
   }
 
-  // Clear deltas to avoid a big jump on toggle
   Input::resetAll();
 
-  // Recenter immediately so first frame delta is sane
+  // Recenter immediately so first delta is zero
   int w = 0, h = 0;
   glfwGetWindowSize(window, &w, &h);
   glfwSetCursorPos(window, w * 0.5, h * 0.5);
@@ -120,7 +116,7 @@ int main() {
     glfwPollEvents();
     PollMovementKeys(window);
 
-    // ---- RELATIVE MOUSE BY RECENTERING ----
+    // RELATIVE MOUSE BY RECENTERING (works reliably with GLFW_CURSOR_HIDDEN)
     if (g_mouseCaptured) {
       int w = 0, h = 0;
       glfwGetWindowSize(window, &w, &h);
@@ -130,14 +126,14 @@ int main() {
       double mx = cx, my = cy;
       glfwGetCursorPos(window, &mx, &my);
 
-      // dx/dy relative to center
       const float dx = static_cast<float>(mx - cx);
       const float dy = static_cast<float>(my - cy);
 
-      // accumulate into Input
-      Input::addMouseDelta(dx, dy);
+      // Only feed if there’s actual movement
+      if (dx != 0.0f || dy != 0.0f) {
+        Input::addMouseDelta(dx, dy);
+      }
 
-      // warp back to center (prevents drift; gives stable deltas)
       glfwSetCursorPos(window, cx, cy);
     }
 
