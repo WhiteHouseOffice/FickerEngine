@@ -6,25 +6,33 @@
 #include "core/Engine.h"
 #include "core/Input.h"
 
-// GLFW key callback -> engine Input
 static void glfw_key_callback(GLFWwindow* /*window*/, int key, int /*scancode*/, int action, int /*mods*/) {
   const bool down = (action != GLFW_RELEASE);
 
   switch (key) {
-    case GLFW_KEY_W: Input::setKey('W', down); break;
-    case GLFW_KEY_A: Input::setKey('A', down); break;
-    case GLFW_KEY_S: Input::setKey('S', down); break;
-    case GLFW_KEY_D: Input::setKey('D', down); break;
-    case GLFW_KEY_SPACE: Input::setKey(' ', down); break;
+    case GLFW_KEY_W: Input::setKey(Input::KEY_W, down); break;
+    case GLFW_KEY_A: Input::setKey(Input::KEY_A, down); break;
+    case GLFW_KEY_S: Input::setKey(Input::KEY_S, down); break;
+    case GLFW_KEY_D: Input::setKey(Input::KEY_D, down); break;
 
-    // Map Ctrl to a key code you can query if you want (choose one; 0x11 is common)
+    case GLFW_KEY_SPACE: Input::setKey(Input::KEY_SPACE, down); break;
+
     case GLFW_KEY_LEFT_CONTROL:
     case GLFW_KEY_RIGHT_CONTROL:
-      Input::setKey(0x11, down);
+      Input::setKey(Input::KEY_CTRL, down);
+      break;
+
+    case GLFW_KEY_LEFT_SHIFT:
+    case GLFW_KEY_RIGHT_SHIFT:
+      Input::setKey(Input::KEY_SHIFT, down);
       break;
 
     default: break;
   }
+}
+
+static void glfw_cursor_pos_callback(GLFWwindow* /*window*/, double x, double y) {
+  Input::onMouseMove(x, y);
 }
 
 int main() {
@@ -47,6 +55,7 @@ int main() {
   glEnable(GL_DEPTH_TEST);
 
   glfwSetKeyCallback(window, glfw_key_callback);
+  glfwSetCursorPosCallback(window, glfw_cursor_pos_callback);
 
   Engine::instance().init();
 
