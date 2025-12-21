@@ -6,17 +6,12 @@
 #include "core/Engine.h"
 #include "core/Input.h"
 
+// We still keep callbacks (for non-movement keys like toggle, etc.)
 static void glfw_key_callback(GLFWwindow* /*window*/, int key, int /*scancode*/, int action, int /*mods*/) {
-  // Only care about press/release (ignore repeat as separate event)
   if (action != GLFW_PRESS && action != GLFW_RELEASE) return;
   const bool down = (action == GLFW_PRESS);
 
   switch (key) {
-    case GLFW_KEY_W: Input::setKey(Input::KEY_W, down); break;
-    case GLFW_KEY_A: Input::setKey(Input::KEY_A, down); break;
-    case GLFW_KEY_S: Input::setKey(Input::KEY_S, down); break;
-    case GLFW_KEY_D: Input::setKey(Input::KEY_D, down); break;
-
     case GLFW_KEY_SPACE: Input::setKey(Input::KEY_SPACE, down); break;
 
     case GLFW_KEY_LEFT_CONTROL:
@@ -41,11 +36,17 @@ static void glfw_cursor_pos_callback(GLFWwindow* /*window*/, double x, double y)
   Input::onMouseMove(x, y);
 }
 
-static void glfw_focus_callback(GLFWwindow* /*window*/, int focused) {
-  // If focus changes, clear stuck keys/mouse deltas.
-  // This fixes “walking forever” when release happens while unfocused.
-  (void)focused;
+static void glfw_focus_callback(GLFWwindow* /*window*/, int /*focused*/) {
+  // Clear stuck keys/mouse when focus changes
   Input::resetAll();
+}
+
+static void PollMovementKeys(GLFWwindow* window) {
+  // Polling prevents “stuck key” if a release event is missed
+  Input::setKey(Input::KEY_W, glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS);
+  Input::setKey(Input::KEY_A, glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS);
+  Input::setKey(Input::KEY_S, glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS);
+  Input::setKey(Input::KEY_D, glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS);
 }
 
 int main() {
@@ -54,7 +55,7 @@ int main() {
     return -1;
   }
 
-  // Force legacy / compatibility GL so fixed-function draw works
+  // Legacy/compat OpenGL so fixed-function debug rendering works
   glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 2);
   glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 1);
   glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_ANY_PROFILE);
@@ -69,10 +70,8 @@ int main() {
   glfwMakeContextCurrent(window);
   glfwSwapInterval(1);
 
-  // Capture mouse inside the window (no visible cursor)
+  // Capture mouse
   glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
-
-  // Optional: raw mouse motion if supported (better feel)
   if (glfwRawMouseMotionSupported()) {
     glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, GLFW_TRUE);
   }
@@ -86,6 +85,9 @@ int main() {
   Engine::instance().init();
 
   while (!glfwWindowShouldClose(window)) {
+    // Keep movement keys in sync every frame (prevents stuck walking)
+    PollMovementKeys(window);
+
     glClearColor(0.1f, 0.2f, 0.35f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
