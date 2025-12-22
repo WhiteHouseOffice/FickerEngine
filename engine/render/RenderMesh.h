@@ -1,47 +1,34 @@
 #pragma once
-#include <vector>
 #include <cstdint>
+#include <vector>
 
 namespace engine::render {
 
+// Position + Color (legacy fixed-function friendly)
+struct VertexPC {
+  float x, y, z;
+  float r, g, b, a;
+};
+
 class RenderMesh {
 public:
-    struct VertexPC {
-        float x, y, z;
-        float r, g, b, a;
-    };
+  enum class Primitive {
+    Triangles = 0,
+    Lines     = 1
+  };
 
-    RenderMesh() = default;
-    ~RenderMesh() = default;
+  void Clear();
 
-    RenderMesh(const RenderMesh&) = delete;
-    RenderMesh& operator=(const RenderMesh&) = delete;
+  void SetPrimitive(Primitive prim);
+  void SetVertices(const std::vector<VertexPC>& verts);
+  void SetIndices(const std::vector<uint16_t>& inds);
 
-    // Upload CPU data for drawing via Emscripten LEGACY_GL_EMULATION.
-    // We intentionally keep this "CPU-side" for now to avoid needing GL loader headers
-    // across platforms while we iterate on the scene.
-    //
-    // "primitive" is usually GL_LINES or GL_TRIANGLES.
-    void Upload(const std::vector<VertexPC>& vertices,
-                const std::vector<std::uint16_t>& indices,
-                unsigned int primitive);
-
-    // Draw with fixed-function emulation (LEGACY_GL_EMULATION).
-    void Draw() const;
-
-    void Clear();
-
-    std::size_t VertexCount() const { return m_vertexCount; }
-    std::size_t IndexCount()  const { return m_indexCount;  }
+  void Draw() const;
 
 private:
-    std::vector<VertexPC> m_vertices;
-    std::vector<std::uint16_t> m_indices;
-
-    std::size_t m_vertexCount = 0;
-    std::size_t m_indexCount  = 0;
-
-    unsigned int m_primitive = 0; // GLenum stored as uint
+  Primitive m_primitive = Primitive::Triangles;
+  std::vector<VertexPC> m_vertices;
+  std::vector<uint16_t> m_indices;
 };
 
 } // namespace engine::render

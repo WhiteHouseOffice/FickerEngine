@@ -1,7 +1,7 @@
 #include "render/RenderMesh.h"
 
-#include <GL/gl.h>   // legacy fixed-function declarations
-#include <cstddef>   // offsetof
+#include <GL/gl.h>
+#include <cstddef> // offsetof
 
 namespace engine::render {
 
@@ -35,7 +35,6 @@ void RenderMesh::Draw() const {
 
   const GLenum glPrim = ToGLPrimitive(m_primitive);
 
-  // Legacy fixed-function vertex arrays (no shader files)
   glEnableClientState(GL_VERTEX_ARRAY);
   glEnableClientState(GL_COLOR_ARRAY);
 
