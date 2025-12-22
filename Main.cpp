@@ -143,7 +143,7 @@ int main() {
         const double dead = 0.00005;
         if (std::abs(dx) > dead || std::abs(dy) > dead) {
           // Invert Y (common FPS). If it feels wrong, remove the minus.
-          Input::addMouseDelta((float)dx, (float)-dy);
+          Input::addMouseDelta((float)-dx, (float)dy);
         }
       }
     }
