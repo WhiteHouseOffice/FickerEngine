@@ -1,5 +1,4 @@
 #include <cstdio>
-#include <cstdlib>
 #include <cmath>
 
 #include <GL/gl.h>
@@ -12,21 +11,18 @@
 // Mouse capture state
 // ------------------------------------------------------------
 static bool   g_mouseCaptured = false;
-
-// WSLg/Wayland can report weird values in disabled cursor mode.
-// We guard against bogus streams by requiring "reasonable" deltas.
+static bool   g_haveLastMouse = false;
 static double g_lastMouseX = 0.0;
 static double g_lastMouseY = 0.0;
-static bool   g_haveLastMouse = false;
 
 static void setMouseCaptured(GLFWwindow* window, bool captured) {
   g_mouseCaptured = captured;
-  g_haveLastMouse = false;        // IMPORTANT: avoid huge first delta
-  Input::resetMouse();            // clear accumulated deltas
+  g_haveLastMouse = false;   // prevents big first delta
+  Input::resetMouse();
 
   glfwSetInputMode(window, GLFW_CURSOR, captured ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
 
-  // Try raw mouse motion if available (helps on some stacks)
+  // Helps on some setups (including some WSLg configs)
   if (glfwRawMouseMotionSupported()) {
     glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, captured ? GLFW_TRUE : GLFW_FALSE);
   }
@@ -38,13 +34,13 @@ static void setMouseCaptured(GLFWwindow* window, bool captured) {
 static void glfw_key_callback(GLFWwindow* window, int key, int /*scancode*/, int action, int /*mods*/) {
   const bool down = (action != GLFW_RELEASE);
 
-  // Escape always releases mouse + allows window close behavior to work normally
+  // ESC releases mouse capture
   if (key == GLFW_KEY_ESCAPE && down) {
     setMouseCaptured(window, false);
     return;
   }
 
-  // Optional: click-to-capture toggle key (F)
+  // Optional: toggle capture with F
   if (key == GLFW_KEY_F && down) {
     setMouseCaptured(window, !g_mouseCaptured);
     return;
@@ -57,22 +53,19 @@ static void glfw_key_callback(GLFWwindow* window, int key, int /*scancode*/, int
     case GLFW_KEY_S: Input::setKey(Input::KEY_S, down); break;
     case GLFW_KEY_D: Input::setKey(Input::KEY_D, down); break;
     case GLFW_KEY_SPACE: Input::setKey(Input::KEY_SPACE, down); break;
+
     case GLFW_KEY_LEFT_CONTROL:
     case GLFW_KEY_RIGHT_CONTROL: Input::setKey(Input::KEY_CTRL, down); break;
+
     case GLFW_KEY_LEFT_SHIFT:
     case GLFW_KEY_RIGHT_SHIFT: Input::setKey(Input::KEY_SHIFT, down); break;
-    default: break;
-  }
 
-  // Let window close button / alt+F4 etc work
-  if (key == GLFW_KEY_Q && down) {
-    // optional quit hotkey
-    // glfwSetWindowShouldClose(window, GLFW_TRUE);
+    default: break;
   }
 }
 
 static void glfw_mouse_button_callback(GLFWwindow* window, int button, int action, int /*mods*/) {
-  // Click inside window to capture mouse
+  // Left click captures mouse
   if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_PRESS) {
     setMouseCaptured(window, true);
   }
@@ -81,12 +74,7 @@ static void glfw_mouse_button_callback(GLFWwindow* window, int button, int actio
 static void glfw_cursor_pos_callback(GLFWwindow* /*window*/, double x, double y) {
   if (!g_mouseCaptured) return;
 
-  // Guard against bogus (0,0) streams that happen on some WSLg/Wayland setups
-  if (x == 0.0 && y == 0.0) {
-    g_haveLastMouse = false;
-    return;
-  }
-
+  // First sample after capture/focus: just seed, no delta
   if (!g_haveLastMouse) {
     g_lastMouseX = x;
     g_lastMouseY = y;
@@ -100,37 +88,30 @@ static void glfw_cursor_pos_callback(GLFWwindow* /*window*/, double x, double y)
   g_lastMouseX = x;
   g_lastMouseY = y;
 
-  // Clamp insane deltas (prevents runaway spin if compositor feeds garbage)
-  const double maxDelta = 120.0;
+  // Clamp insane spikes (WSLg/compositor weirdness)
+  const double maxDelta = 200.0;
   if (dx >  maxDelta) dx =  maxDelta;
   if (dx < -maxDelta) dx = -maxDelta;
   if (dy >  maxDelta) dy =  maxDelta;
   if (dy < -maxDelta) dy = -maxDelta;
 
-  // If the stream is still biased (WSLg), it often shows as tiny constant drift.
-  // Ignore very small deltas to prevent slow crawling spin.
-  const double dead = 0.0001;
+  // Deadzone to kill tiny drift
+  const double dead = 0.00005;
   if (std::abs(dx) < dead && std::abs(dy) < dead) return;
 
-  // Feed ONLY deltas into Input
-  Input::onMouseMove(g_lastMouseX, g_lastMouseY); // keep internal last consistent
-  // But our Input::onMouseMove expects absolute positions; we already updated last above.
-  // So instead, we inject the delta via a tiny trick: call onMouseMove with "synthetic" absolute.
-  // If your Input is absolute-delta based, use the direct delta injector instead.
-
-  // ✅ Better: if you have no delta injector, use this:
-  // We emulate absolute movement by advancing a synthetic cursor position.
-  static double sx = 0.0, sy = 0.0;
-  sx += dx;
-  sy += dy;
-  Input::onMouseMove(sx, sy);
+  // ✅ Send true deltas into Input
+  Input::addMouseDelta(static_cast<float>(dx), static_cast<float>(dy));
 }
 
 static void glfw_focus_callback(GLFWwindow* window, int focused) {
   if (!focused) {
-    // On alt-tab, release capture and clear input so keys don't "stick"
+    // On alt-tab: release capture and clear input so keys don't stick
     setMouseCaptured(window, false);
     Input::resetAll();
+  } else {
+    // On refocus: avoid a huge delta
+    g_haveLastMouse = false;
+    Input::resetMouse();
   }
 }
 
@@ -143,7 +124,7 @@ int main() {
     return 1;
   }
 
-  // Request a basic OpenGL context
+  // Basic OpenGL context (legacy-friendly)
   glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 2);
   glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 1);
 
@@ -163,13 +144,11 @@ int main() {
   glfwSetCursorPosCallback(window, glfw_cursor_pos_callback);
   glfwSetWindowFocusCallback(window, glfw_focus_callback);
 
-  // Init engine
   Engine::instance().init();
 
   while (!glfwWindowShouldClose(window)) {
     glfwPollEvents();
 
-    // Clear screen (your engine currently renders blue anyway)
     glClearColor(0.1f, 0.2f, 0.35f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
@@ -179,7 +158,6 @@ int main() {
   }
 
   Engine::instance().shutdown();
-
   glfwDestroyWindow(window);
   glfwTerminate();
   return 0;
