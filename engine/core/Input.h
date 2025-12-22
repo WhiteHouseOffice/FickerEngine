@@ -10,6 +10,7 @@ public:
     KEY_SPACE,
     KEY_CTRL,
     KEY_SHIFT,
+    KEY_F,      // <-- added (used by Game.cpp)
     KEY_COUNT
   };
 
@@ -24,6 +25,5 @@ public:
   static void getMouseDelta(float& dx, float& dy);
   static void resetMouse();
 
-  // Useful on focus loss
   static void resetAll();
 };

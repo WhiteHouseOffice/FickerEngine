@@ -40,12 +40,6 @@ static void glfw_key_callback(GLFWwindow* window, int key, int /*scancode*/, int
     return;
   }
 
-  // Optional: toggle capture with F
-  if (key == GLFW_KEY_F && down) {
-    setMouseCaptured(window, !g_mouseCaptured);
-    return;
-  }
-
   // Map movement keys to your Input enum
   switch (key) {
     case GLFW_KEY_W: Input::setKey(Input::KEY_W, down); break;
@@ -53,7 +47,7 @@ static void glfw_key_callback(GLFWwindow* window, int key, int /*scancode*/, int
     case GLFW_KEY_S: Input::setKey(Input::KEY_S, down); break;
     case GLFW_KEY_D: Input::setKey(Input::KEY_D, down); break;
     case GLFW_KEY_SPACE: Input::setKey(Input::KEY_SPACE, down); break;
-
+    case GLFW_KEY_F: Input::setKey(Input::KEY_F, down); break;
     case GLFW_KEY_LEFT_CONTROL:
     case GLFW_KEY_RIGHT_CONTROL: Input::setKey(Input::KEY_CTRL, down); break;
 
