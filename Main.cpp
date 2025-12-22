@@ -9,38 +9,19 @@
 #include "core/Input.h"
 
 // ------------------------------------------------------------
-// Tuning
+// Tuning (change these, not random signs elsewhere)
 // ------------------------------------------------------------
-static constexpr float MOUSE_SENS = 1.0f;
-
-// If your camera feels inverted, change these (don’t play whack-a-mole elsewhere)
-static constexpr bool INVERT_X = false;
-static constexpr bool INVERT_Y = true;   // common FPS: mouse up = look up
-
-// ------------------------------------------------------------
-// Runtime detection: WSL / WSLg tends to be weird with GLFW_CURSOR_DISABLED
-// ------------------------------------------------------------
-static bool isWSL() {
-  // Common env vars in WSL
-  return (std::getenv("WSL_DISTRO_NAME") != nullptr) ||
-         (std::getenv("WSL_INTEROP") != nullptr) ||
-         (std::getenv("WSLENV") != nullptr);
-}
+static constexpr float MOUSE_SENS = 0.25f;  // lower = less sensitive
+static constexpr bool  INVERT_X   = false;  // set true if left/right feels inverted
+static constexpr bool  INVERT_Y   = true;   // common FPS: mouse up = look up
 
 // ------------------------------------------------------------
 // Mouse capture state
 // ------------------------------------------------------------
 static bool g_mouseCaptured = false;
-
-// For disabled-cursor delta mode
-static bool   g_haveLast = false;
-static double g_lastX = 0.0;
-static double g_lastY = 0.0;
-
-// For warp-lock mode
 static int  g_winW = 960;
 static int  g_winH = 540;
-static bool g_skipOnce = true;
+static bool g_skipDeltaOnce = true;
 
 static void glfw_window_size_callback(GLFWwindow*, int w, int h) {
   g_winW = (w > 1) ? w : 1;
@@ -53,50 +34,21 @@ static void warpToCenter(GLFWwindow* window) {
   glfwSetCursorPos(window, cx, cy);
 }
 
-// Choose mode:
-// - Non-WSL: real lock with GLFW_CURSOR_DISABLED
-// - WSL: warp-lock with HIDDEN cursor (feels locked, avoids biased disabled-mode)
-static bool useWarpLock(GLFWwindow*) {
-  return isWSL();
-}
-
 static void setMouseCaptured(GLFWwindow* window, bool captured) {
   g_mouseCaptured = captured;
-
   Input::resetMouse();
-  g_haveLast = false;
-  g_skipOnce = true;
+  g_skipDeltaOnce = true;
 
-  if (!captured) {
-    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
-    if (glfwRawMouseMotionSupported())
-      glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, GLFW_FALSE);
-    return;
-  }
+  // Hide cursor while captured (we manually lock by warping to center)
+  glfwSetInputMode(window, GLFW_CURSOR, captured ? GLFW_CURSOR_HIDDEN : GLFW_CURSOR_NORMAL);
 
-  if (!useWarpLock(window)) {
-    // ✅ REAL LOCK (X11): confine cursor to window
-    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
-
-    // raw motion helps when available
-    if (glfwRawMouseMotionSupported())
-      glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, GLFW_TRUE);
-
-    // seed "last"
-    double x=0,y=0;
-    glfwGetCursorPos(window, &x, &y);
-    g_lastX = x;
-    g_lastY = y;
-    g_haveLast = true;
-  } else {
-    // ✅ WSLg fallback "lock": hide cursor and warp to center every frame
-    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_HIDDEN);
+  if (captured) {
     warpToCenter(window);
   }
 }
 
 // ------------------------------------------------------------
-// Input callbacks
+// Callbacks
 // ------------------------------------------------------------
 static void glfw_key_callback(GLFWwindow* window, int key, int, int action, int) {
   const bool down = (action != GLFW_RELEASE);
@@ -120,7 +72,6 @@ static void glfw_key_callback(GLFWwindow* window, int key, int, int action, int)
     case GLFW_KEY_RIGHT_SHIFT: Input::setKey(Input::KEY_SHIFT, down); break;
 
     case GLFW_KEY_F: Input::setKey(Input::KEY_F, down); break;
-
     default: break;
   }
 }
@@ -137,47 +88,9 @@ static void glfw_focus_callback(GLFWwindow* window, int focused) {
     Input::resetAll();
   } else {
     Input::resetMouse();
-    g_haveLast = false;
-    g_skipOnce = true;
-    if (g_mouseCaptured && useWarpLock(window)) {
-      warpToCenter(window);
-    }
+    g_skipDeltaOnce = true;
+    if (g_mouseCaptured) warpToCenter(window);
   }
-}
-
-// We still keep this callback; in disabled mode it’s the best source of deltas.
-// In warp mode, we ignore it and compute deltas per-frame in the loop.
-static void glfw_cursor_pos_callback(GLFWwindow*, double x, double y) {
-  if (!g_mouseCaptured) return;
-  if (useWarpLock(nullptr)) return;
-
-  if (!g_haveLast) {
-    g_lastX = x; g_lastY = y;
-    g_haveLast = true;
-    return;
-  }
-
-  double dx = x - g_lastX;
-  double dy = y - g_lastY;
-  g_lastX = x; g_lastY = y;
-
-  // clamp spikes
-  const double maxDelta = 300.0;
-  if (dx >  maxDelta) dx =  maxDelta;
-  if (dx < -maxDelta) dx = -maxDelta;
-  if (dy >  maxDelta) dy =  maxDelta;
-  if (dy < -maxDelta) dy = -maxDelta;
-
-  // deadzone
-  const double dead = 0.00005;
-  if (std::abs(dx) < dead && std::abs(dy) < dead) return;
-
-  float fx = (float)dx * MOUSE_SENS;
-  float fy = (float)dy * MOUSE_SENS;
-  if (INVERT_X) fx = -fx;
-  if (INVERT_Y) fy = -fy;
-
-  Input::addMouseDelta(fx, fy);
 }
 
 // ------------------------------------------------------------
@@ -206,18 +119,17 @@ int main() {
   glfwSetMouseButtonCallback(window, glfw_mouse_button_callback);
   glfwSetWindowFocusCallback(window, glfw_focus_callback);
   glfwSetWindowSizeCallback(window, glfw_window_size_callback);
-  glfwSetCursorPosCallback(window, glfw_cursor_pos_callback);
-
-  std::printf("[mouse] mode = %s\n", useWarpLock(window) ? "warp-lock (WSL fallback)" : "cursor-disabled (real lock)");
 
   Engine::instance().init();
 
   while (!glfwWindowShouldClose(window)) {
     glfwPollEvents();
 
-    // Warp-lock mode: compute deltas from center and warp back every frame
-    if (g_mouseCaptured && useWarpLock(window)) {
-      double x=0.0, y=0.0;
+    // --------------------------------------------------------
+    // ✅ Teleport-to-center mouse lock (EVERY FRAME)
+    // --------------------------------------------------------
+    if (g_mouseCaptured) {
+      double x = 0.0, y = 0.0;
       glfwGetCursorPos(window, &x, &y);
 
       const double cx = g_winW * 0.5;
@@ -226,23 +138,28 @@ int main() {
       double dx = x - cx;
       double dy = y - cy;
 
+      // Immediately lock back to center
       warpToCenter(window);
 
-      if (g_skipOnce) {
-        g_skipOnce = false;
+      if (g_skipDeltaOnce) {
+        g_skipDeltaOnce = false;
       } else {
-        const double maxDelta = 300.0;
+        // Clamp spikes
+        const double maxDelta = 250.0;
         if (dx >  maxDelta) dx =  maxDelta;
         if (dx < -maxDelta) dx = -maxDelta;
         if (dy >  maxDelta) dy =  maxDelta;
         if (dy < -maxDelta) dy = -maxDelta;
 
+        // Deadzone
         const double dead = 0.00005;
         if (std::abs(dx) > dead || std::abs(dy) > dead) {
           float fx = (float)dx * MOUSE_SENS;
           float fy = (float)dy * MOUSE_SENS;
+
           if (INVERT_X) fx = -fx;
           if (INVERT_Y) fy = -fy;
+
           Input::addMouseDelta(fx, fy);
         }
       }
