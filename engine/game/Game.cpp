@@ -99,8 +99,34 @@ void Game::update(float dt) {
 
     /* ---------- MOUSE LOOK ---------- */
     // ---- mouse look ----
-float dx = 0.0f, dy = 0.0f;
-Input::getMouseDelta(dx, dy);
+// ---- mouse look (RAW mouse deltas -> yaw/pitch) ----
+float mdx = 0.0f, mdy = 0.0f;
+Input::getMouseDelta(mdx, mdy);
+
+// One knob for feel (pixels -> radians). Adjust ONLY this.
+const float sens = 0.0025f;
+
+// If inverted, flip HERE (do NOT flip in Main.cpp at the same time)
+const bool invertX = false;
+const bool invertY = true;
+
+if (invertX) mdx = -mdx;
+if (invertY) mdy = -mdy;
+
+// Apply
+m_yaw   += mdx * sens;
+m_pitch += mdy * sens;
+
+// ✅ yaw: unlimited (wrap so it doesn't grow forever)
+const float twoPi = 6.28318530718f;
+if (m_yaw >  twoPi) m_yaw -= twoPi;
+if (m_yaw < -twoPi) m_yaw += twoPi;
+
+// ✅ pitch: clamp only
+const float maxPitch = 1.55334306f; // ~89 degrees
+if (m_pitch >  maxPitch)  m_pitch =  maxPitch;
+if (m_pitch < -maxPitch)  m_pitch = -maxPitch;
+
 
 // Sensitivity (tune this)
 const float sens = 0.0025f; // radians per pixel-ish
