@@ -9,11 +9,12 @@ namespace {
 
 void Input::init() {
   std::memset(g_keys, 0, sizeof(g_keys));
-  g_dx = g_dy = 0.0f;
+  g_dx = 0.0f;
+  g_dy = 0.0f;
 }
 
 void Input::beginFrame() {
-  // If later you want “pressed this frame” vs “held”, do it here.
+  // reserved (pressed/released edge tracking can go here later)
 }
 
 void Input::setKey(Key k, bool down) {

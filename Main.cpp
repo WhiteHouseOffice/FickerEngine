@@ -8,23 +8,39 @@
 #include "core/Input.h"
 
 // ------------------------------------------------------------
-// Mouse capture state
+// Mouse capture state (WSLg-safe)
 // ------------------------------------------------------------
-static bool   g_mouseCaptured = false;
-static bool   g_haveLastMouse = false;
-static double g_lastMouseX = 0.0;
-static double g_lastMouseY = 0.0;
+static bool g_mouseCaptured = false;
+
+// window size for center recentering
+static int g_winW = 960;
+static int g_winH = 540;
+
+// when we warp cursor to center, GLFW will fire a cursor callback;
+// ignore the next event to avoid artificial delta.
+static bool g_ignoreNextMouseEvent = false;
+
+static void glfw_window_size_callback(GLFWwindow* /*window*/, int w, int h) {
+  g_winW = (w > 1) ? w : 1;
+  g_winH = (h > 1) ? h : 1;
+}
 
 static void setMouseCaptured(GLFWwindow* window, bool captured) {
   g_mouseCaptured = captured;
-  g_haveLastMouse = false;   // prevents big first delta
   Input::resetMouse();
 
   glfwSetInputMode(window, GLFW_CURSOR, captured ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
 
-  // Helps on some setups (including some WSLg configs)
   if (glfwRawMouseMotionSupported()) {
     glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, captured ? GLFW_TRUE : GLFW_FALSE);
+  }
+
+  // Recenter immediately on capture (prevents drift on WSLg/Wayland)
+  if (captured) {
+    const double cx = g_winW * 0.5;
+    const double cy = g_winH * 0.5;
+    g_ignoreNextMouseEvent = true;
+    glfwSetCursorPos(window, cx, cy);
   }
 }
 
@@ -40,19 +56,21 @@ static void glfw_key_callback(GLFWwindow* window, int key, int /*scancode*/, int
     return;
   }
 
-  // Map movement keys to your Input enum
+  // Map movement keys to Input enum
   switch (key) {
     case GLFW_KEY_W: Input::setKey(Input::KEY_W, down); break;
     case GLFW_KEY_A: Input::setKey(Input::KEY_A, down); break;
     case GLFW_KEY_S: Input::setKey(Input::KEY_S, down); break;
     case GLFW_KEY_D: Input::setKey(Input::KEY_D, down); break;
     case GLFW_KEY_SPACE: Input::setKey(Input::KEY_SPACE, down); break;
-    case GLFW_KEY_F: Input::setKey(Input::KEY_F, down); break;
+
     case GLFW_KEY_LEFT_CONTROL:
     case GLFW_KEY_RIGHT_CONTROL: Input::setKey(Input::KEY_CTRL, down); break;
 
     case GLFW_KEY_LEFT_SHIFT:
     case GLFW_KEY_RIGHT_SHIFT: Input::setKey(Input::KEY_SHIFT, down); break;
+
+    case GLFW_KEY_F: Input::setKey(Input::KEY_F, down); break;
 
     default: break;
   }
@@ -65,46 +83,49 @@ static void glfw_mouse_button_callback(GLFWwindow* window, int button, int actio
   }
 }
 
-static void glfw_cursor_pos_callback(GLFWwindow* /*window*/, double x, double y) {
+static void glfw_cursor_pos_callback(GLFWwindow* window, double x, double y) {
+  (void)window;
   if (!g_mouseCaptured) return;
 
-  // First sample after capture/focus: just seed, no delta
-  if (!g_haveLastMouse) {
-    g_lastMouseX = x;
-    g_lastMouseY = y;
-    g_haveLastMouse = true;
+  // When we recenter, GLFW emits a synthetic move event. Ignore it.
+  if (g_ignoreNextMouseEvent) {
+    g_ignoreNextMouseEvent = false;
     return;
   }
 
-  double dx = x - g_lastMouseX;
-  double dy = y - g_lastMouseY;
+  const double cx = g_winW * 0.5;
+  const double cy = g_winH * 0.5;
 
-  g_lastMouseX = x;
-  g_lastMouseY = y;
+  double dx = x - cx;
+  double dy = y - cy;
 
-  // Clamp insane spikes (WSLg/compositor weirdness)
-  const double maxDelta = 200.0;
+  // Clamp spikes (WSLg/compositor glitches)
+  const double maxDelta = 250.0;
   if (dx >  maxDelta) dx =  maxDelta;
   if (dx < -maxDelta) dx = -maxDelta;
   if (dy >  maxDelta) dy =  maxDelta;
   if (dy < -maxDelta) dy = -maxDelta;
 
-  // Deadzone to kill tiny drift
+  // Deadzone to prevent tiny drift from accumulating
   const double dead = 0.00005;
-  if (std::abs(dx) < dead && std::abs(dy) < dead) return;
+  const bool tiny = (std::abs(dx) < dead && std::abs(dy) < dead);
 
-  // ✅ Send true deltas into Input
-  Input::addMouseDelta(static_cast<float>(dx), static_cast<float>(dy));
+  if (!tiny) {
+    Input::addMouseDelta((float)dx, (float)dy);
+  }
+
+  // Recenter every event so cursor never "walks" (kills bottom-right drift)
+  g_ignoreNextMouseEvent = true;
+  glfwSetCursorPos(window, cx, cy);
 }
 
 static void glfw_focus_callback(GLFWwindow* window, int focused) {
   if (!focused) {
-    // On alt-tab: release capture and clear input so keys don't stick
     setMouseCaptured(window, false);
     Input::resetAll();
   } else {
-    // On refocus: avoid a huge delta
-    g_haveLastMouse = false;
+    // On refocus, avoid a huge delta and recentre if captured later
+    g_ignoreNextMouseEvent = false;
     Input::resetMouse();
   }
 }
@@ -137,7 +158,9 @@ int main() {
   glfwSetMouseButtonCallback(window, glfw_mouse_button_callback);
   glfwSetCursorPosCallback(window, glfw_cursor_pos_callback);
   glfwSetWindowFocusCallback(window, glfw_focus_callback);
+  glfwSetWindowSizeCallback(window, glfw_window_size_callback);
 
+  // Init engine
   Engine::instance().init();
 
   while (!glfwWindowShouldClose(window)) {

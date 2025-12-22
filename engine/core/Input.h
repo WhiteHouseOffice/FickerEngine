@@ -10,7 +10,7 @@ public:
     KEY_SPACE,
     KEY_CTRL,
     KEY_SHIFT,
-    KEY_F,      // <-- added (used by Game.cpp)
+    KEY_F,
     KEY_COUNT
   };
 
