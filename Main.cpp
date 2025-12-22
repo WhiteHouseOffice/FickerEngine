@@ -94,7 +94,7 @@ static void glfw_cursor_pos_callback(GLFWwindow* /*window*/, double x, double y)
 
   // ✅ Use the sign convention that made it feel correct for you:
   // (If one axis ends up reversed again, we’ll flip only that one.)
-  Input::addMouseDelta((float)-dx, (float)dy);
+  Input::addMouseDelta((float)dx, (float)-dy);
 }
 
 static void glfw_focus_callback(GLFWwindow* window, int focused) {
