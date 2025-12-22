@@ -98,18 +98,26 @@ void Game::update(float dt) {
     m_prevFToggle = fDown;
 
     /* ---------- MOUSE LOOK ---------- */
-    float mdx = 0.0f, mdy = 0.0f;
-    Input::getMouseDelta(mdx, mdy);
+    // ---- mouse look ----
+float dx = 0.0f, dy = 0.0f;
+Input::getMouseDelta(dx, dy);
 
-    const float clampDelta = 25.0f;
-    mdx = clampf(mdx, -clampDelta, clampDelta);
-    mdy = clampf(mdy, -clampDelta, clampDelta);
+// Sensitivity (tune this)
+const float sens = 0.0025f; // radians per pixel-ish
 
-    m_yaw   += mdx * m_mouseSens;
-    m_pitch += (-mdy) * m_mouseSens;   // mouse up = look up
+m_yaw   += dx * sens;
+m_pitch += dy * sens;
 
-    const float pitchLimit = 1.55334f;
-    m_pitch = clampf(m_pitch, -pitchLimit, pitchLimit);
+// ✅ allow infinite yaw (wrap it so it doesn’t grow forever)
+const float twoPi = 6.28318530718f;
+if (m_yaw >  twoPi) m_yaw -= twoPi;
+if (m_yaw < -twoPi) m_yaw += twoPi;
+
+// ✅ clamp pitch only (don’t let camera flip)
+const float maxPitch = 1.55334306f; // ~89 degrees in radians
+if (m_pitch >  maxPitch)  m_pitch =  maxPitch;
+if (m_pitch < -maxPitch)  m_pitch = -maxPitch;
+
 
     /* ---------- BASIS ---------- */
     const Vec3 up(0,1,0);
