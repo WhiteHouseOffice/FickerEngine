@@ -10,14 +10,16 @@ file(GLOB_RECURSE ENGINE_GEOM   "engine/geom/*.cpp")
 file(GLOB_RECURSE ENGINE_RENDER "engine/render/*.cpp")
 file(GLOB_RECURSE ENGINE_GAME   "engine/game/*.cpp")
 
-add_executable(FickerEngine
+set(SOURCES
   Main.cpp
   ${ENGINE_CORE}
   ${ENGINE_GEOM}
   ${ENGINE_RENDER}
   ${ENGINE_GAME}
 )
-list(REMOVE_DUPLICATES ENGINE_CORE ENGINE_GEOM ENGINE_RENDER ENGINE_GAME)
+list(REMOVE_DUPLICATES SOURCES)
+
+add_executable(FickerEngine ${SOURCES})
 
 target_include_directories(FickerEngine PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/engine
