@@ -98,52 +98,33 @@ void Game::update(float dt) {
     m_prevFToggle = fDown;
 
     /* ---------- MOUSE LOOK ---------- */
-    // ---- mouse look ----
-// ---- mouse look (RAW mouse deltas -> yaw/pitch) ----
+ // ---- mouse look (RAW mouse deltas -> yaw/pitch) ----
 float mdx = 0.0f, mdy = 0.0f;
 Input::getMouseDelta(mdx, mdy);
 
-// One knob for feel (pixels -> radians). Adjust ONLY this.
-const float sens = 0.0025f;
+// Sensitivity (ONLY tuning knob)
+const float sens = 0.0025f; // radians per pixel
 
-// If inverted, flip HERE (do NOT flip in Main.cpp at the same time)
+// Inversion (change ONLY here)
 const bool invertX = false;
 const bool invertY = true;
 
 if (invertX) mdx = -mdx;
 if (invertY) mdy = -mdy;
 
-// Apply
+// Apply rotation
 m_yaw   += mdx * sens;
 m_pitch += mdy * sens;
 
-// ✅ yaw: unlimited (wrap so it doesn't grow forever)
+// --- yaw: infinite, wrapped ---
 const float twoPi = 6.28318530718f;
 if (m_yaw >  twoPi) m_yaw -= twoPi;
 if (m_yaw < -twoPi) m_yaw += twoPi;
 
-// ✅ pitch: clamp only
-const float maxPitch = 1.55334306f; // ~89 degrees
+// --- pitch: clamped ---
+const float maxPitch = 1.55334306f; // ~89°
 if (m_pitch >  maxPitch)  m_pitch =  maxPitch;
 if (m_pitch < -maxPitch)  m_pitch = -maxPitch;
-
-
-// Sensitivity (tune this)
-const float sens = 0.0025f; // radians per pixel-ish
-
-m_yaw   += dx * sens;
-m_pitch += dy * sens;
-
-// ✅ allow infinite yaw (wrap it so it doesn’t grow forever)
-const float twoPi = 6.28318530718f;
-if (m_yaw >  twoPi) m_yaw -= twoPi;
-if (m_yaw < -twoPi) m_yaw += twoPi;
-
-// ✅ clamp pitch only (don’t let camera flip)
-const float maxPitch = 1.55334306f; // ~89 degrees in radians
-if (m_pitch >  maxPitch)  m_pitch =  maxPitch;
-if (m_pitch < -maxPitch)  m_pitch = -maxPitch;
-
 
     /* ---------- BASIS ---------- */
     const Vec3 up(0,1,0);
