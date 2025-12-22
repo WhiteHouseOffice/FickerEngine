@@ -11,27 +11,30 @@ static bool g_mouseCaptured = false;
 static int  g_winW = 960;
 static int  g_winH = 540;
 
-static bool g_ignoreNextWarpEvent = false;
+// Use this to ignore the single delta right after capture or focus gain
+static bool g_skipDeltaOnce = true;
 
 static void glfw_window_size_callback(GLFWwindow* /*window*/, int w, int h) {
   g_winW = (w > 1) ? w : 1;
   g_winH = (h > 1) ? h : 1;
 }
 
+static void warpToCenter(GLFWwindow* window) {
+  const double cx = g_winW * 0.5;
+  const double cy = g_winH * 0.5;
+  glfwSetCursorPos(window, cx, cy);
+}
+
 static void setMouseCaptured(GLFWwindow* window, bool captured) {
   g_mouseCaptured = captured;
   Input::resetMouse();
+  g_skipDeltaOnce = true;
 
-  // ✅ WSLg-safe: do NOT use GLFW_CURSOR_DISABLED (can bias deltas)
-  // Use NORMAL (or HIDDEN) + manual warp.
+  // WSLg-safe: HIDDEN + manual warp lock
   glfwSetInputMode(window, GLFW_CURSOR, captured ? GLFW_CURSOR_HIDDEN : GLFW_CURSOR_NORMAL);
 
-  // Seed cursor to center on capture
   if (captured) {
-    const double cx = g_winW * 0.5;
-    const double cy = g_winH * 0.5;
-    g_ignoreNextWarpEvent = true;
-    glfwSetCursorPos(window, cx, cy);
+    warpToCenter(window);
   }
 }
 
@@ -73,8 +76,12 @@ static void glfw_focus_callback(GLFWwindow* window, int focused) {
     setMouseCaptured(window, false);
     Input::resetAll();
   } else {
+    // If you alt-tab back in, avoid a huge first delta
+    if (g_mouseCaptured) {
+      g_skipDeltaOnce = true;
+      warpToCenter(window);
+    }
     Input::resetMouse();
-    g_ignoreNextWarpEvent = false;
   }
 }
 
@@ -107,7 +114,7 @@ int main() {
   while (!glfwWindowShouldClose(window)) {
     glfwPollEvents();
 
-    // ✅ Manual mouse delta capture (WSLg-safe)
+    // Manual FPS mouse lock (WSLg-safe)
     if (g_mouseCaptured) {
       double x = 0.0, y = 0.0;
       glfwGetCursorPos(window, &x, &y);
@@ -115,34 +122,30 @@ int main() {
       const double cx = g_winW * 0.5;
       const double cy = g_winH * 0.5;
 
-      if (!g_ignoreNextWarpEvent) {
-        double dx = x - cx;
-        double dy = y - cy;
+      double dx = x - cx;
+      double dy = y - cy;
 
-        // clamp spikes
+      // Immediately lock mouse back to center
+      warpToCenter(window);
+
+      // Skip one delta after capture/focus so it doesn't jump
+      if (g_skipDeltaOnce) {
+        g_skipDeltaOnce = false;
+      } else {
+        // Clamp spikes
         const double maxDelta = 250.0;
         if (dx >  maxDelta) dx =  maxDelta;
         if (dx < -maxDelta) dx = -maxDelta;
         if (dy >  maxDelta) dy =  maxDelta;
         if (dy < -maxDelta) dy = -maxDelta;
 
-        // deadzone
+        // Deadzone
         const double dead = 0.00005;
         if (std::abs(dx) > dead || std::abs(dy) > dead) {
-          // FPS convention: invert Y (optional). If this feels wrong, remove the minus.
+          // Invert Y (common FPS). If it feels wrong, remove the minus.
           Input::addMouseDelta((float)dx, (float)-dy);
         }
       }
-
-      // warp back to center every frame
-      g_ignoreNextWarpEvent = true;
-      glfwSetCursorPos(window, cx, cy);
-    }
-
-    // After warp, allow next real sample
-    if (g_ignoreNextWarpEvent) {
-      // Next frame, we will read position after warp; ignore exactly one sample
-      g_ignoreNextWarpEvent = false;
     }
 
     glClearColor(0.1f, 0.2f, 0.35f, 1.0f);
