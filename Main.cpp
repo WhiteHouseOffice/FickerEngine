@@ -66,7 +66,6 @@ static void glfw_mouse_button_callback(GLFWwindow* window, int button, int actio
 static void glfw_cursor_pos_callback(GLFWwindow* /*window*/, double x, double y) {
   if (!g_mouseCaptured) return;
 
-  // First sample after capture/focus: seed only, no delta
   if (!g_haveLastMouse) {
     g_lastMouseX = x;
     g_lastMouseY = y;
@@ -80,18 +79,17 @@ static void glfw_cursor_pos_callback(GLFWwindow* /*window*/, double x, double y)
   g_lastMouseX = x;
   g_lastMouseY = y;
 
-  // If WSLg/Wayland feeds nonsense spikes, clamp hard
   const double maxDelta = 250.0;
   if (dx >  maxDelta) dx =  maxDelta;
   if (dx < -maxDelta) dx = -maxDelta;
   if (dy >  maxDelta) dy =  maxDelta;
   if (dy < -maxDelta) dy = -maxDelta;
 
-  // Deadzone to kill tiny drift
   const double dead = 0.00005;
   if (std::abs(dx) < dead && std::abs(dy) < dead) return;
 
-  Input::addMouseDelta((float)dx, (float)dy);
+  // ✅ flip Y here
+  Input::addMouseDelta((float)dx, (float)-dy);
 }
 
 static void glfw_focus_callback(GLFWwindow* window, int focused) {
