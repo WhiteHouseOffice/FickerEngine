@@ -25,12 +25,18 @@ target_include_directories(FickerEngine PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/engine
 )
 
-find_package(OpenGL REQUIRED)
-find_package(glfw3 REQUIRED)
-
+# Native-only
 target_compile_definitions(FickerEngine PRIVATE FE_NATIVE=1)
+
+find_package(OpenGL REQUIRED)
+find_package(PkgConfig REQUIRED)
+
+pkg_check_modules(GLFW REQUIRED glfw3)
+
+target_include_directories(FickerEngine PRIVATE ${GLFW_INCLUDE_DIRS})
+target_link_directories(FickerEngine PRIVATE ${GLFW_LIBRARY_DIRS})
 
 target_link_libraries(FickerEngine PRIVATE
   OpenGL::GL
-  glfw
+  ${GLFW_LIBRARIES}
 )
