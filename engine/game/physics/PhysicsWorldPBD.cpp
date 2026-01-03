@@ -1,13 +1,19 @@
 #include "game/physics/PhysicsWorldPBD.h"
 
 #include <algorithm>
+#include <cmath>
 
 namespace fe {
 
-static inline float dot3(const Vec3& a, const Vec3& b) { return a.x*b.x + a.y*b.y + a.z*b.z; }
+static inline float dot3(const Vec3& a, const Vec3& b) {
+  return a.x*b.x + a.y*b.y + a.z*b.z;
+}
 static inline float len2(const Vec3& v) { return dot3(v,v); }
 
-RigidClusterBody& PhysicsWorldPBD::createBodyFromProxy(const ColliderProxy& proxy, float massPerParticle) {
+RigidClusterBody& PhysicsWorldPBD::createBodyFromProxy(
+  const ColliderProxy& proxy,
+  float massPerParticle
+) {
   RigidClusterBody b;
   b.id = m_nextId++;
   b.proxy = proxy;
@@ -16,7 +22,8 @@ RigidClusterBody& PhysicsWorldPBD::createBodyFromProxy(const ColliderProxy& prox
   b.particles.resize(n);
   b.radii.resize(n);
 
-  const float invMass = (massPerParticle > 0.f) ? (1.f / massPerParticle) : 0.f;
+  const float invMass =
+    (massPerParticle > 0.f) ? (1.f / massPerParticle) : 0.f;
 
   for (int i = 0; i < n; ++i) {
     b.particles[i].pos  = proxy.spheres[i].center;
@@ -25,14 +32,16 @@ RigidClusterBody& PhysicsWorldPBD::createBodyFromProxy(const ColliderProxy& prox
     b.radii[i] = proxy.spheres[i].radius;
   }
 
-  // Constraints: connect all pairs for now (simple, stiff for small N=8).
-  // Later we’ll switch to edges+diagonals only, but this is robust and easy.
-  for (int i = 0; i < n; ++i) for (int j = i+1; j < n; ++j) {
-    DistanceConstraint c;
-    c.a = i; c.b = j;
-    const Vec3 d = b.particles[j].pos - b.particles[i].pos;
-    c.rest = std::sqrt(len2(d));
-    b.constraints.push_back(c);
+  // Rigid constraints: connect all pairs (OK for small N like 8)
+  for (int i = 0; i < n; ++i) {
+    for (int j = i + 1; j < n; ++j) {
+      DistanceConstraint c;
+      c.a = i;
+      c.b = j;
+      Vec3 d = b.particles[j].pos - b.particles[i].pos;
+      c.rest = std::sqrt(len2(d));
+      b.constraints.push_back(c);
+    }
   }
 
   m_bodies.push_back(b);
@@ -43,8 +52,8 @@ void PhysicsWorldPBD::step(float dt) {
   if (dt <= 0.f) return;
 
   m_accum += dt;
-
   int steps = 0;
+
   while (m_accum >= fixedDt && steps < maxSubsteps) {
     substep(fixedDt);
     m_accum -= fixedDt;
@@ -61,30 +70,31 @@ void PhysicsWorldPBD::substep(float h) {
 
   // Solve collisions + constraints
   for (int it = 0; it < solverIters; ++it) {
-    // Ground
-    if (enableGround) {
-      for (auto& b : m_bodies) {
-        if (b.asleep) continue;
-        solveGround(b);
+
+    // Multiple collision passes reduce squish
+    for (int cit = 0; cit < collisionIters; ++cit) {
+
+      if (enableGround) {
+        for (auto& b : m_bodies) {
+          if (b.asleep) continue;
+          solveGround(b);
+        }
+      }
+
+      for (size_t i = 0; i < m_bodies.size(); ++i) {
+        for (size_t j = i + 1; j < m_bodies.size(); ++j) {
+          if (m_bodies[i].asleep && m_bodies[j].asleep) continue;
+          solveBodyBody(m_bodies[i], m_bodies[j]);
+        }
       }
     }
 
-    // Body-body (naive O(M^2), ok for now)
-    for (size_t i = 0; i < m_bodies.size(); ++i) {
-      for (size_t j = i+1; j < m_bodies.size(); ++j) {
-        if (m_bodies[i].asleep && m_bodies[j].asleep) continue;
-        solveBodyBody(m_bodies[i], m_bodies[j]);
-      }
-    }
-
-    // Constraints
     for (auto& b : m_bodies) {
       if (b.asleep) continue;
       solveConstraints(b);
     }
   }
 
-  // Sleeping update
   for (auto& b : m_bodies) {
     updateSleeping(b, h);
   }
@@ -92,16 +102,16 @@ void PhysicsWorldPBD::substep(float h) {
 
 void PhysicsWorldPBD::integrate(RigidClusterBody& b, float h) {
   const Vec3 g = b.useGravity ? gravity : Vec3(0.f,0.f,0.f);
+  const float damping = 0.98f;
 
   for (auto& p : b.particles) {
     if (p.invMass == 0.f) continue;
 
-    // Verlet integration: v = pos - prev
     Vec3 v = p.pos - p.prev;
-    p.prev = p.pos;
+    v = v * damping;
 
-    // Apply gravity
-    p.pos = p.pos + v + (g * (h*h));
+    p.prev = p.pos;
+    p.pos  = p.pos + v + (g * (h * h));
   }
 }
 
@@ -110,119 +120,85 @@ void PhysicsWorldPBD::solveConstraints(RigidClusterBody& b) {
     Particle& pa = b.particles[c.a];
     Particle& pb = b.particles[c.b];
 
-    const float wA = pa.invMass;
-    const float wB = pb.invMass;
-    const float wSum = wA + wB;
+    float wA = pa.invMass;
+    float wB = pb.invMass;
+    float wSum = wA + wB;
     if (wSum <= 0.f) continue;
 
-    const Vec3 d = pb.pos - pa.pos;
-    const float d2 = len2(d);
+    Vec3 d = pb.pos - pa.pos;
+    float d2 = len2(d);
     if (d2 <= 1e-12f) continue;
 
-    const float dist = std::sqrt(d2);
-    const float diff = (dist - c.rest) / dist;
+    float dist = std::sqrt(d2);
+    float diff = (dist - c.rest) / dist;
+    Vec3 corr = d * diff;
 
-    // Position correction (PBD)
-    const Vec3 corr = d * diff;
     pa.pos = pa.pos + corr * ( wA / wSum);
     pb.pos = pb.pos - corr * ( wB / wSum);
   }
 }
 
 void PhysicsWorldPBD::solveGround(RigidClusterBody& b) {
+  const float groundFriction = 0.60f;
+
   for (size_t i = 0; i < b.particles.size(); ++i) {
     Particle& p = b.particles[i];
     if (p.invMass == 0.f) continue;
 
-    const float r = b.radii[i];
-    const float bottom = p.pos.y - r;
+    float r = b.radii[i];
+    float bottom = p.pos.y - r;
+
     if (bottom < groundY) {
       p.pos.y += (groundY - bottom);
+
+      Vec3 v = p.pos - p.prev;
+      v.x *= (1.0f - groundFriction);
+      v.z *= (1.0f - groundFriction);
+      p.prev = p.pos - v;
     }
   }
 }
 
-void PhysicsWorldPBD::solveSphereSphere(Particle& pa, float ra, Particle& pb, float rb) {
-  const Vec3 d = pb.pos - pa.pos;
-  const float d2 = len2(d);
-  const float r = ra + rb;
+void PhysicsWorldPBD::solveSphereSphere(
+  Particle& pa, float ra,
+  Particle& pb, float rb
+) {
+  Vec3 d = pb.pos - pa.pos;
+  float d2 = len2(d);
+  float r = ra + rb;
 
   if (d2 >= r*r || d2 <= 1e-12f) return;
 
-  const float dist = std::sqrt(d2);
-  const Vec3 n = d * (1.f / dist);
-  const float pen = (r - dist);
+  float dist = std::sqrt(d2);
+  Vec3 n = d * (1.f / dist);
+  float pen = (r - dist);
 
-  const float wA = pa.invMass;
-  const float wB = pb.invMass;
-  const float wSum = wA + wB;
+  float wA = pa.invMass;
+  float wB = pb.invMass;
+  float wSum = wA + wB;
   if (wSum <= 0.f) return;
 
-  // Split correction
   pa.pos = pa.pos - n * (pen * (wA / wSum));
   pb.pos = pb.pos + n * (pen * (wB / wSum));
 }
 
-void PhysicsWorldPBD::solveBodyBody(RigidClusterBody& a, RigidClusterBody& b) {
-  // Naive all-pairs particle collisions (fine for 8 spheres).
+void PhysicsWorldPBD::solveBodyBody(
+  RigidClusterBody& a,
+  RigidClusterBody& b
+) {
   for (size_t i = 0; i < a.particles.size(); ++i) {
     for (size_t j = 0; j < b.particles.size(); ++j) {
-      solveSphereSphere(a.particles[i], a.radii[i], b.particles[j], b.radii[j]);
+      solveSphereSphere(
+        a.particles[i], a.radii[i],
+        b.particles[j], b.radii[j]
+      );
     }
   }
-}
-
-bool PhysicsWorldPBD::solvePlayerSphere(Vec3& playerCenter, float playerRadius) {
-  bool grounded = false;
-
-  // Treat player as invMass=0 kinematic particle
-  Particle player;
-  player.pos = playerCenter;
-  player.prev = playerCenter;
-  player.invMass = 0.f;
-
-  for (auto& b : m_bodies) {
-    // if player interacts, wake body
-    bool touched = false;
-
-    for (size_t i = 0; i < b.particles.size(); ++i) {
-      Particle& p = b.particles[i];
-      const float r = b.radii[i];
-
-      // Resolve sphere-sphere (player vs particle), but only move particle and player center.
-      Vec3 d = p.pos - player.pos;
-      float d2 = len2(d);
-      float rr = (playerRadius + r);
-      if (d2 >= rr*rr || d2 <= 1e-12f) continue;
-
-      touched = true;
-
-      float dist = std::sqrt(d2);
-      Vec3 n = d * (1.f / dist);
-      float pen = (rr - dist);
-
-      // Move dynamic particle away; also move player opposite direction a bit so player can stand.
-      if (p.invMass > 0.f) {
-        p.pos = p.pos + n * pen;
-      }
-      player.pos = player.pos - n * pen;
-
-      // Grounded if contact normal points up against player (player pushed upward)
-      if (n.y > 0.5f) grounded = true;
-    }
-
-    if (touched) b.wake();
-  }
-
-  playerCenter = player.pos;
-  return grounded;
 }
 
 bool PhysicsWorldPBD::updateSleeping(RigidClusterBody& b, float h) {
-  if (b.particles.empty()) return false;
-
-  // Estimate max particle velocity
   float vmax2 = 0.f;
+
   for (const auto& p : b.particles) {
     Vec3 v = (p.pos - p.prev) * (1.f / h);
     float v2 = len2(v);
@@ -233,7 +209,6 @@ bool PhysicsWorldPBD::updateSleeping(RigidClusterBody& b, float h) {
     b.sleepTimer += h;
     if (b.sleepTimer >= b.sleepTime) {
       b.asleep = true;
-      // snap prev to pos to avoid “wake jitter”
       for (auto& p : b.particles) p.prev = p.pos;
     }
   } else {
@@ -242,6 +217,10 @@ bool PhysicsWorldPBD::updateSleeping(RigidClusterBody& b, float h) {
   }
 
   return b.asleep;
+}
+
+bool PhysicsWorldPBD::solvePlayerSphere(Vec3&, float) {
+  return false;
 }
 
 } // namespace fe

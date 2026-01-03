@@ -16,22 +16,21 @@ public:
   float groundY = 0.f;
 
   // Fixed timestep substepping
-  float fixedDt = 1.0f / 120.0f;
+  float fixedDt = 1.0f / 180.0f;
   int   maxSubsteps = 8;
 
-  // Solver iterations per substep
-  int solverIters = 4;
+  // Solver iterations (higher = stiffer bodies)
+  int solverIters = 10;
 
-  // Collision iterations (usually same as solverIters)
-  int collisionIters = 2;
+  // Extra collision passes per substep
+  int collisionIters = 6;
 
-  // Simple body management
-  RigidClusterBody& createBodyFromProxy(const ColliderProxy& proxy, float massPerParticle);
+  RigidClusterBody& createBodyFromProxy(const ColliderProxy& proxy,
+                                       float massPerParticle);
 
   void step(float dt);
 
-  // Player interaction: kinematic sphere that pushes bodies AND can stand.
-  // This will modify playerCenter to resolve collisions.
+  // Player interaction (not wired yet)
   bool solvePlayerSphere(Vec3& playerCenter, float playerRadius);
 
   const std::vector<RigidClusterBody>& bodies() const { return m_bodies; }
@@ -50,7 +49,8 @@ private:
 
   void solveGround(RigidClusterBody& b);
   void solveBodyBody(RigidClusterBody& a, RigidClusterBody& b);
-  void solveSphereSphere(Particle& pa, float ra, Particle& pb, float rb);
+  void solveSphereSphere(Particle& pa, float ra,
+                         Particle& pb, float rb);
 
   bool updateSleeping(RigidClusterBody& b, float h);
 };
