@@ -12,3 +12,11 @@ cmake --build webbuild
 # Copy webbuild/bin/* into webbuild/site/ and open webbuild/site/index.html
 ```
 CI will do this automatically and upload PNG frames in `out/web_frames`.
+
+## Repo structure
+
+See `docs/FOLDER_STRUCTURE.md`.
+
+## Physics
+
+See `docs/PHYSICS.md`.

@@ -15,6 +15,11 @@ public:
 
   Mat4 view() const;
 
+  // Player proxy (for Scene physics interactions)
+  Vec3 playerFeet() const { return m_pos; }
+  float playerRadius() const { return m_radius; }
+  Vec3 playerSphereCenter() const { return m_pos + Vec3(0.0f, m_radius, 0.0f); }
+
 private:
   // Player "feet" position (ground contact is y=0)
   Vec3  m_pos   = Vec3(0.0f, 0.0f, 5.0f);

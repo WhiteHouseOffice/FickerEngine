@@ -40,6 +40,9 @@ void Engine::update() {
 
   // Advance game + scene
   if (game)  game->update(dt);
+  if (scene && game) {
+    scene->setPlayerSphere(game->playerSphereCenter(), game->playerRadius());
+  }
   if (scene) scene->update(dt);
 }
 
