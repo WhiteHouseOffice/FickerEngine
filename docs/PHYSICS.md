@@ -1,36 +1,35 @@
 # Physics
 
-Physics lives in `engine/game/physics/` so `engine/geom/` can stay mesh-only.
+Physics code lives in `engine/game/physics/`.
 
-## Goals
-- **Simple and fast** (support many objects)
-- Keep integration minimal so we don't break rendering or camera controls
-- Start with primitives we can reason about (AABB boxes + a player proxy sphere)
+## Current approach (dev/body-physics)
 
-## Current model
+**Rigid-body boxes (sequential impulse solver)**
 
-### RigidBody
-`RigidBody` is ultra-light:
-- Linear velocity only (no rotation yet)
-- `invMass == 0` means static
-- Gravity toggle + linear damping + force accumulator
+Dynamic props are simulated as oriented boxes (OBB) with:
+- position + orientation (quat)
+- linear + angular velocity
+- mass + inertia (box inertia)
+- friction, restitution
+- sleeping (idle bodies stop simulating)
 
-### PhysicsWorld
-`PhysicsWorld::step(dt, objects)`:
-- Semi-implicit Euler integration
-- Optional infinite ground plane at `y = groundY`
-- Optional AABB-vs-AABB collision resolution for objects that have a box collider
-- Optional kinematic **player sphere proxy** that pushes dynamic boxes (does not move the player)
+Static world collision is currently represented as:
+- an infinite ground plane (`y = 0`)
+- a small set of static AABBs (platforms) built from `Scene` objects
 
-### Colliders
-Colliders are owned by `GameObject`, not by `geom` meshes:
-- `enableBoxCollider(halfExtents)`
-- This keeps `engine/geom/` clean and easy to exclude for small code shares
+The player is represented to physics as a **kinematic sphere**:
+- Scene resolves sphere-vs-props/world collisions
+- the corrected sphere position/velocity is applied back to `Game` so you can stand on props and push them.
 
-## Test scene
-`Scene::init()` spawns:
-- Static platforms (matching the debug boxes)
-- Dynamic cubes (one placed on a platform so you can push it off)
-- Additional cubes on the ground
+## Why this
 
-`Scene::renderDebug()` draws all colliders as wire boxes in native builds.
+This is the “Source / Havok style” baseline that makes:
+- stacking stable (standing on crates)
+- interpenetration rare (with small tolerance)
+- tipping possible (angular velocity + OBB contacts)
+
+## Next steps
+
+- Replace the “platform AABBs” with the world topology store (`WorldMesh`) as the static collision source.
+- Add “compound colliders” (multiple boxes per rigid body) for concave/dented shapes.
+- Add on-demand collider generation from destructed chunks (voxel/mesh → compound boxes / convex decomposition).

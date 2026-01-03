@@ -19,6 +19,11 @@ public:
   Vec3 playerFeet() const { return m_pos; }
   float playerRadius() const { return m_radius; }
   Vec3 playerSphereCenter() const { return m_pos + Vec3(0.0f, m_radius, 0.0f); }
+  Vec3 playerVelocity() const { return m_vel; }
+
+  // Called by Scene after physics to prevent interpenetration and allow standing on props.
+  void applySceneCorrection(const Vec3& correctedCenter, const Vec3& correctedVelocity, bool groundedFromScene);
+
 
 private:
   // Player "feet" position (ground contact is y=0)

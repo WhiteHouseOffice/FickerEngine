@@ -5,8 +5,7 @@
 
 #include "math/MiniMath.h"
 #include "game/GameObject.h"
-#include "game/physics/PhysicsWorld.h"
-#include "game/physics/PhysicsWorldPBD.h"
+#include "game/physics/PhysicsWorldRB.h"
 
 class Scene {
 public:
@@ -16,18 +15,31 @@ public:
   void render(const Mat4& view, const Mat4& proj);
   void renderDebug(const Mat4& view, const Mat4& proj);
 
-  // Provide a kinematic sphere proxy (usually the player) so it can push boxes.
-  void setPlayerSphere(const Vec3& center, float radius);
+  // Player proxy (kinematic sphere) for pushing / standing on props.
+  void setPlayerSphere(const Vec3& center, float radius, const Vec3& velocity);
+  bool getPlayerSphere(Vec3& outCenter, Vec3& outVelocity, bool& outGrounded) const;
 
 private:
   std::vector<std::unique_ptr<GameObject>> m_objects;
-  PhysicsWorld m_physics;
-  fe::PhysicsWorldPBD m_pbd;
 
-  // Cached proxy (fed into PhysicsWorld each frame)
-  bool  m_playerSphereValid = false;
-  Vec3  m_playerSphereCenter{0.f, 0.f, 0.f};
-  float m_playerSphereRadius = 0.5f;
+  // Rigid-body physics for dynamic props (boxes)
+  fe::PhysicsWorldRB m_rb;
+
+  // Static colliders (built from GameObjects with box colliders)
+  std::vector<fe::AABB> m_static;
+
+  // Cached player proxy (fed into physics each frame)
+  bool  m_playerValid = false;
+  Vec3  m_playerCenter{0.f, 0.f, 0.f};
+  float m_playerRadius = 0.5f;
+  Vec3  m_playerVel{0.f,0.f,0.f};
+
+  // Results after physics step
+  Vec3  m_playerCenterOut{0.f,0.f,0.f};
+  Vec3  m_playerVelOut{0.f,0.f,0.f};
+  bool  m_playerGroundedOut = false;
 
   GameObject* createObject();
+
+  void rebuildStaticAABBs();
 };

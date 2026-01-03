@@ -1,8 +1,6 @@
 #include "game/Scene.h"
 #include "game/GameObject.h"
 
-#include "game/physics/ProxyGen.h"
-
 #ifdef FE_NATIVE
   #include <GL/gl.h>
 #endif
@@ -21,187 +19,220 @@ static void DrawGrid(float halfSize, float step) {
   }
 
   glEnd();
+#else
+  (void)halfSize; (void)step;
 #endif
 }
 
-static void DrawBox(const Vec3& mn, const Vec3& mx) {
+static void DrawAABB(const Vec3& mn, const Vec3& mx) {
 #ifdef FE_NATIVE
   glBegin(GL_LINES);
 
-  // bottom rectangle
+  // bottom
   glVertex3f(mn.x, mn.y, mn.z); glVertex3f(mx.x, mn.y, mn.z);
   glVertex3f(mx.x, mn.y, mn.z); glVertex3f(mx.x, mn.y, mx.z);
   glVertex3f(mx.x, mn.y, mx.z); glVertex3f(mn.x, mn.y, mx.z);
   glVertex3f(mn.x, mn.y, mx.z); glVertex3f(mn.x, mn.y, mn.z);
 
-  // top rectangle
+  // top
   glVertex3f(mn.x, mx.y, mn.z); glVertex3f(mx.x, mx.y, mn.z);
   glVertex3f(mx.x, mx.y, mn.z); glVertex3f(mx.x, mx.y, mx.z);
   glVertex3f(mx.x, mx.y, mx.z); glVertex3f(mn.x, mx.y, mx.z);
   glVertex3f(mn.x, mx.y, mx.z); glVertex3f(mn.x, mx.y, mn.z);
 
-  // vertical edges
+  // sides
   glVertex3f(mn.x, mn.y, mn.z); glVertex3f(mn.x, mx.y, mn.z);
   glVertex3f(mx.x, mn.y, mn.z); glVertex3f(mx.x, mx.y, mn.z);
   glVertex3f(mx.x, mn.y, mx.z); glVertex3f(mx.x, mx.y, mx.z);
   glVertex3f(mn.x, mn.y, mx.z); glVertex3f(mn.x, mx.y, mx.z);
 
   glEnd();
+#else
+  (void)mn; (void)mx;
 #endif
 }
 
-void Scene::setPlayerSphere(const Vec3& center, float radius) {
-  m_playerSphereValid = true;
-  m_playerSphereCenter = center;
-  m_playerSphereRadius = radius;
+static void DrawOBB(const fe::RigidBoxBody& b) {
+#ifdef FE_NATIVE
+  using fe::Quat;
+  using fe::quatNormalize;
+  using fe::quatRotate;
+
+  const Quat qn = quatNormalize(b.orientation);
+  const Vec3 ax = quatRotate(qn, Vec3(1,0,0));
+  const Vec3 ay = quatRotate(qn, Vec3(0,1,0));
+  const Vec3 az = quatRotate(qn, Vec3(0,0,1));
+
+  auto corner = [&](int sx,int sy,int sz)->Vec3{
+    return b.position
+      + ax * (b.halfExtents.x * (float)sx)
+      + ay * (b.halfExtents.y * (float)sy)
+      + az * (b.halfExtents.z * (float)sz);
+  };
+
+  Vec3 c000 = corner(-1,-1,-1);
+  Vec3 c100 = corner( 1,-1,-1);
+  Vec3 c110 = corner( 1, 1,-1);
+  Vec3 c010 = corner(-1, 1,-1);
+
+  Vec3 c001 = corner(-1,-1, 1);
+  Vec3 c101 = corner( 1,-1, 1);
+  Vec3 c111 = corner( 1, 1, 1);
+  Vec3 c011 = corner(-1, 1, 1);
+
+  glBegin(GL_LINES);
+
+  // bottom
+  glVertex3f(c000.x,c000.y,c000.z); glVertex3f(c100.x,c100.y,c100.z);
+  glVertex3f(c100.x,c100.y,c100.z); glVertex3f(c101.x,c101.y,c101.z);
+  glVertex3f(c101.x,c101.y,c101.z); glVertex3f(c001.x,c001.y,c001.z);
+  glVertex3f(c001.x,c001.y,c001.z); glVertex3f(c000.x,c000.y,c000.z);
+
+  // top
+  glVertex3f(c010.x,c010.y,c010.z); glVertex3f(c110.x,c110.y,c110.z);
+  glVertex3f(c110.x,c110.y,c110.z); glVertex3f(c111.x,c111.y,c111.z);
+  glVertex3f(c111.x,c111.y,c111.z); glVertex3f(c011.x,c011.y,c011.z);
+  glVertex3f(c011.x,c011.y,c011.z); glVertex3f(c010.x,c010.y,c010.z);
+
+  // verticals
+  glVertex3f(c000.x,c000.y,c000.z); glVertex3f(c010.x,c010.y,c010.z);
+  glVertex3f(c100.x,c100.y,c100.z); glVertex3f(c110.x,c110.y,c110.z);
+  glVertex3f(c101.x,c101.y,c101.z); glVertex3f(c111.x,c111.y,c111.z);
+  glVertex3f(c001.x,c001.y,c001.z); glVertex3f(c011.x,c011.y,c011.z);
+
+  glEnd();
+#else
+  (void)b;
+#endif
 }
 
 GameObject* Scene::createObject() {
-  m_objects.emplace_back(std::make_unique<GameObject>());
-  return m_objects.back().get();
+  auto obj = std::make_unique<GameObject>();
+  GameObject* out = obj.get();
+  m_objects.emplace_back(std::move(obj));
+  return out;
+}
+
+void Scene::rebuildStaticAABBs() {
+  m_static.clear();
+  m_static.reserve(m_objects.size());
+
+  for (auto& o : m_objects) {
+    if (!o || !o->hasBoxCollider()) continue;
+
+    const Vec3 he = o->boxHalfExtents();
+    fe::AABB a;
+    a.min = Vec3(o->position.x - he.x, o->position.y - he.y, o->position.z - he.z);
+    a.max = Vec3(o->position.x + he.x, o->position.y + he.y, o->position.z + he.z);
+    m_static.push_back(a);
+  }
+
+  m_rb.setStaticAABBs(m_static);
 }
 
 void Scene::init() {
-  // Physics tuning (simple, stable)
-  m_physics.gravity = Vec3(0.f, -18.0f, 0.f);
-  m_physics.enableGroundPlane = true;
-  m_physics.groundY = 0.0f;
-  m_physics.groundRestitution = 0.0f;
-  m_physics.groundFriction = 0.02f;
-  m_physics.solverIterations = 2;
-
-  // PBD physics (for stackable / tippable crates)
-  m_pbd.gravity = Vec3(0.f, -18.0f, 0.f);
-  m_pbd.enableGround = true;
-  m_pbd.groundY = 0.0f;
-  m_pbd.fixedDt = 1.0f / 120.0f;
-  m_pbd.maxSubsteps = 8;
-  m_pbd.solverIters = 4;
-
-  // ---- Static platforms (match the debug boxes) ----
+  // ---- Static world platforms (must match Game::init platform AABBs) ----
   {
     auto* p = createObject();
-    p->position = Vec3(0.0f, 0.65f, 0.0f);          // center of box (-2..2, 0.5..0.8, -2..2)
-    p->enableBoxCollider(Vec3(2.0f, 0.15f, 2.0f));  // half extents
-    // no rigidbody => static
+    p->position = Vec3(0.0f, 0.65f, 0.0f);        // (-2..2, 0.5..0.8, -2..2)
+    p->enableBoxCollider(Vec3(2.0f, 0.15f, 2.0f)); // half extents
   }
   {
     auto* p = createObject();
-    p->position = Vec3(3.75f, 1.35f, 0.0f);         // (3..4.5, 1.2..1.5, -1..1)
+    p->position = Vec3(3.75f, 1.35f, 0.0f);        // (3..4.5, 1.2..1.5, -1..1)
     p->enableBoxCollider(Vec3(0.75f, 0.15f, 1.0f));
   }
   {
     auto* p = createObject();
-    p->position = Vec3(-3.25f, 0.4f, 4.0f);         // (-4..-2.5, 0.2..0.6, 3..5)
+    p->position = Vec3(-3.25f, 0.4f, 4.0f);        // (-4..-2.5, 0.2..0.6, 3..5)
     p->enableBoxCollider(Vec3(0.75f, 0.2f, 1.0f));
   }
 
-  // ---- PBD crate test (dynamic, stackable) ----
-  // Two crates stacked on the ground. These are simulated by PhysicsWorldPBD,
-  // not the old AABB-only PhysicsWorld.
-  {
-    const float r = 0.10f; // corner sphere radius (tune later)
-    // crate size: 1x1x1, sitting on ground -> y in [0..1]
-    auto proxy0 = fe::ProxyGen::make8CornerProxyFromAABB(
-        Vec3(-0.5f, 0.0f, -0.5f),
-        Vec3( 0.5f, 1.0f,  0.5f),
-        r);
-    (void)m_pbd.createBodyFromProxy(proxy0, /*massPerParticle*/ 0.25f);
+  // Build static collider list for rigid-body world
+  rebuildStaticAABBs();
 
-    // second crate stacked above -> y in [1.05..2.05]
-    auto proxy1 = fe::ProxyGen::make8CornerProxyFromAABB(
-        Vec3(-0.5f, 1.05f, -0.5f),
-        Vec3( 0.5f, 2.05f,  0.5f),
-        r);
-    (void)m_pbd.createBodyFromProxy(proxy1, /*massPerParticle*/ 0.25f);
-  }
+  // ---- Rigid-body world tuning ----
+  m_rb.gravity = Vec3(0.f, -18.0f, 0.f);
+  m_rb.enableGround = true;
+  m_rb.groundY = 0.0f;
+  m_rb.friction = 0.7f;
+  m_rb.restitution = 0.0f;
+  m_rb.fixedDt = 1.0f / 120.0f;
+  m_rb.maxSubsteps = 8;
+  m_rb.velocityIters = 12;
+  m_rb.positionIters = 4;
+
+  // ---- Spawn dynamic crates (stacked) ----
+  // Lower crate on the big platform
+  m_rb.createBox(Vec3(0.0f, 1.30f, 0.0f), Vec3(0.50f, 0.50f, 0.50f), 2.0f);
+
+  // Second crate stacked on top
+  m_rb.createBox(Vec3(0.0f, 2.35f, 0.0f), Vec3(0.50f, 0.50f, 0.50f), 2.0f);
+
+  // One crate on the side platform to push off
+  m_rb.createBox(Vec3(3.75f, 2.10f, 0.0f), Vec3(0.50f, 0.50f, 0.50f), 2.0f);
+}
+
+void Scene::setPlayerSphere(const Vec3& center, float radius, const Vec3& velocity) {
+  m_playerValid = true;
+  m_playerCenter = center;
+  m_playerRadius = radius;
+  m_playerVel = velocity;
+}
+
+bool Scene::getPlayerSphere(Vec3& outCenter, Vec3& outVelocity, bool& outGrounded) const {
+  if (!m_playerValid) return false;
+  outCenter = m_playerCenterOut;
+  outVelocity = m_playerVelOut;
+  outGrounded = m_playerGroundedOut;
+  return true;
 }
 
 void Scene::update(float dt) {
-  // Gameplay update
+  // Gameplay update (static objects)
   for (auto& obj : m_objects) {
     if (obj) obj->update(dt);
   }
 
-  // Feed player sphere into physics (so you can push cubes)
-  if (m_playerSphereValid) {
-    m_physics.setPlayerSphere(m_playerSphereCenter, m_playerSphereRadius);
-  } else {
-    m_physics.clearPlayerSphere();
+  // Static colliders might change later (destruction). For now, rebuild each frame is cheap.
+  rebuildStaticAABBs();
+
+  // Step rigid-body world
+  m_rb.step(dt);
+
+  // Collide player sphere against crates + platforms + ground
+  m_playerCenterOut = m_playerCenter;
+  m_playerVelOut = m_playerVel;
+  m_playerGroundedOut = false;
+
+  if (m_playerValid) {
+    (void)m_rb.collidePlayerSphere(m_playerCenterOut, m_playerRadius, m_playerVelOut, &m_playerGroundedOut);
   }
-
-  // Physics step
-  std::vector<GameObject*> ptrs;
-  ptrs.reserve(m_objects.size());
-  for (auto& obj : m_objects) ptrs.push_back(obj.get());
-
-  m_physics.step(dt, ptrs);
-
-  // Step PBD world (stackable crates)
-  m_pbd.step(dt);
 }
 
 void Scene::render(const Mat4& /*view*/, const Mat4& /*proj*/) {
-  // keep empty for now
+  // Rendering pipeline TBD (we are mostly in debug-draw mode currently)
 }
 
-void Scene::renderDebug(const Mat4& view, const Mat4& proj) {
+void Scene::renderDebug(const Mat4& /*view*/, const Mat4& /*proj*/) {
 #ifdef FE_NATIVE
-  glMatrixMode(GL_PROJECTION);
-  glLoadMatrixf(proj.m);
-
-  glMatrixMode(GL_MODELVIEW);
-  glLoadMatrixf(view.m);
-
-  glDisable(GL_TEXTURE_2D);
-  glDisable(GL_CULL_FACE);
-  glDisable(GL_LIGHTING);
-
-  glLineWidth(1.0f);
-
-  // Make sure lines are visible
-  glColor3f(1.0f, 1.0f, 1.0f);
-
   // Grid
-  DrawGrid(50.0f, 1.0f);
+  glColor3f(0.6f, 0.6f, 0.6f);
+  DrawGrid(20.0f, 1.0f);
 
-  // Draw all colliders as wire boxes
-  glColor3f(1.0f, 1.0f, 0.0f);
-  for (auto& obj : m_objects) {
-    if (!obj) continue;
-    if (!obj->hasBoxCollider()) continue;
-    const Vec3 he = obj->boxHalfExtents();
-    const Vec3 mn = obj->position - he;
-    const Vec3 mx = obj->position + he;
-    DrawBox(mn, mx);
+  // Static platforms
+  glColor3f(0.2f, 0.9f, 0.2f);
+  for (const auto& a : m_static) {
+    DrawAABB(a.min, a.max);
   }
 
-  // Draw PBD bodies as wire AABBs (derived from corner spheres)
-  glColor3f(0.0f, 1.0f, 1.0f);
-  for (const auto& body : m_pbd.bodies()) {
-    if (body.particles.empty()) continue;
-
-    Vec3 mn( 1e30f,  1e30f,  1e30f);
-    Vec3 mx(-1e30f, -1e30f, -1e30f);
-
-    for (size_t i = 0; i < body.particles.size(); ++i) {
-      const auto& p = body.particles[i];
-      const float r = (i < body.radii.size()) ? body.radii[i] : 0.0f;
-      const Vec3 a = Vec3(p.pos.x - r, p.pos.y - r, p.pos.z - r);
-      const Vec3 b = Vec3(p.pos.x + r, p.pos.y + r, p.pos.z + r);
-
-      if (a.x < mn.x) mn.x = a.x;
-      if (a.y < mn.y) mn.y = a.y;
-      if (a.z < mn.z) mn.z = a.z;
-      if (b.x > mx.x) mx.x = b.x;
-      if (b.y > mx.y) mx.y = b.y;
-      if (b.z > mx.z) mx.z = b.z;
-    }
-
-    DrawBox(mn, mx);
+  // Dynamic crates (OBBs)
+  glColor3f(0.9f, 0.7f, 0.2f);
+  for (const auto& b : m_rb.bodies()) {
+    DrawOBB(b);
   }
 
-  // Reset color
-  glColor3f(1.0f, 1.0f, 1.0f);
+  glColor3f(1.f, 1.f, 1.f);
 #endif
 }
+

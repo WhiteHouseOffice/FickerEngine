@@ -200,3 +200,17 @@ Mat4 Game::view() const {
     Vec3 fwd = forwardFromYawPitch(m_yaw, m_pitch);
     return lookAt(eye, eye + fwd, Vec3(0,1,0));
 }
+
+
+void Game::applySceneCorrection(const Vec3& correctedCenter, const Vec3& correctedVelocity, bool groundedFromScene) {
+    // Convert sphere center back to feet position
+    m_pos = correctedCenter - Vec3(0.0f, m_radius, 0.0f);
+
+    // Keep velocity consistent with collision response
+    m_vel = correctedVelocity;
+
+    if (groundedFromScene) {
+        m_onGround = true;
+        if (m_vel.y < 0.0f) m_vel.y = 0.0f;
+    }
+}

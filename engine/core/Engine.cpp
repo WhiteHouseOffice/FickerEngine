@@ -41,9 +41,17 @@ void Engine::update() {
   // Advance game + scene
   if (game)  game->update(dt);
   if (scene && game) {
-    scene->setPlayerSphere(game->playerSphereCenter(), game->playerRadius());
+    scene->setPlayerSphere(game->playerSphereCenter(), game->playerRadius(), game->playerVelocity());
   }
   if (scene) scene->update(dt);
+
+  // Apply collision correction back into the player (so crates can be stood on / pushed)
+  if (scene && game) {
+    Vec3 c; Vec3 v; bool grounded = false;
+    if (scene->getPlayerSphere(c, v, grounded)) {
+      game->applySceneCorrection(c, v, grounded);
+    }
+  }
 }
 
 void Engine::render() {
