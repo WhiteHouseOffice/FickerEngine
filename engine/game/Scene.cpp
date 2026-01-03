@@ -1,6 +1,8 @@
 #include "game/Scene.h"
 #include "game/GameObject.h"
 
+#include "game/physics/ProxyGen.h"
+
 #ifdef FE_NATIVE
   #include <GL/gl.h>
 #endif
@@ -68,6 +70,14 @@ void Scene::init() {
   m_physics.groundFriction = 0.02f;
   m_physics.solverIterations = 2;
 
+  // PBD physics (for stackable / tippable crates)
+  m_pbd.gravity = Vec3(0.f, -18.0f, 0.f);
+  m_pbd.enableGround = true;
+  m_pbd.groundY = 0.0f;
+  m_pbd.fixedDt = 1.0f / 120.0f;
+  m_pbd.maxSubsteps = 8;
+  m_pbd.solverIters = 4;
+
   // ---- Static platforms (match the debug boxes) ----
   {
     auto* p = createObject();
@@ -86,31 +96,24 @@ void Scene::init() {
     p->enableBoxCollider(Vec3(0.75f, 0.2f, 1.0f));
   }
 
-  // ---- Test cubes (dynamic) ----
-
-  // One cube on the middle platform, so you can push it off.
+  // ---- PBD crate test (dynamic, stackable) ----
+  // Two crates stacked on the ground. These are simulated by PhysicsWorldPBD,
+  // not the old AABB-only PhysicsWorld.
   {
-    auto* b = createObject();
-    // platform top y=0.8, cube halfY=0.5 => center y = 1.3
-    b->position = Vec3(0.0f, 1.3f, 0.0f);
-    b->enableBoxCollider(Vec3(0.5f, 0.5f, 0.5f));
-    b->enablePhysics(2.0f, true);
-  }
+    const float r = 0.10f; // corner sphere radius (tune later)
+    // crate size: 1x1x1, sitting on ground -> y in [0..1]
+    auto proxy0 = fe::ProxyGen::make8CornerProxyFromAABB(
+        Vec3(-0.5f, 0.0f, -0.5f),
+        Vec3( 0.5f, 1.0f,  0.5f),
+        r);
+    (void)m_pbd.createBodyFromProxy(proxy0, /*massPerParticle*/ 0.25f);
 
-  // A small pile on the ground to shove around
-  for (int i = 0; i < 6; ++i) {
-    auto* b = createObject();
-    b->position = Vec3(-3.0f + i * 1.2f, 0.75f, -4.0f);
-    b->enableBoxCollider(Vec3(0.5f, 0.5f, 0.5f));
-    b->enablePhysics(2.0f, true);
-  }
-
-  // A drop test from above
-  {
-    auto* b = createObject();
-    b->position = Vec3(4.0f, 6.0f, -2.0f);
-    b->enableBoxCollider(Vec3(0.5f, 0.5f, 0.5f));
-    b->enablePhysics(1.0f, true);
+    // second crate stacked above -> y in [1.05..2.05]
+    auto proxy1 = fe::ProxyGen::make8CornerProxyFromAABB(
+        Vec3(-0.5f, 1.05f, -0.5f),
+        Vec3( 0.5f, 2.05f,  0.5f),
+        r);
+    (void)m_pbd.createBodyFromProxy(proxy1, /*massPerParticle*/ 0.25f);
   }
 }
 
@@ -133,6 +136,9 @@ void Scene::update(float dt) {
   for (auto& obj : m_objects) ptrs.push_back(obj.get());
 
   m_physics.step(dt, ptrs);
+
+  // Step PBD world (stackable crates)
+  m_pbd.step(dt);
 }
 
 void Scene::render(const Mat4& /*view*/, const Mat4& /*proj*/) {
@@ -167,6 +173,31 @@ void Scene::renderDebug(const Mat4& view, const Mat4& proj) {
     const Vec3 he = obj->boxHalfExtents();
     const Vec3 mn = obj->position - he;
     const Vec3 mx = obj->position + he;
+    DrawBox(mn, mx);
+  }
+
+  // Draw PBD bodies as wire AABBs (derived from corner spheres)
+  glColor3f(0.0f, 1.0f, 1.0f);
+  for (const auto& body : m_pbd.bodies()) {
+    if (body.particles.empty()) continue;
+
+    Vec3 mn( 1e30f,  1e30f,  1e30f);
+    Vec3 mx(-1e30f, -1e30f, -1e30f);
+
+    for (size_t i = 0; i < body.particles.size(); ++i) {
+      const auto& p = body.particles[i];
+      const float r = (i < body.radii.size()) ? body.radii[i] : 0.0f;
+      const Vec3 a = Vec3(p.pos.x - r, p.pos.y - r, p.pos.z - r);
+      const Vec3 b = Vec3(p.pos.x + r, p.pos.y + r, p.pos.z + r);
+
+      if (a.x < mn.x) mn.x = a.x;
+      if (a.y < mn.y) mn.y = a.y;
+      if (a.z < mn.z) mn.z = a.z;
+      if (b.x > mx.x) mx.x = b.x;
+      if (b.y > mx.y) mx.y = b.y;
+      if (b.z > mx.z) mx.z = b.z;
+    }
+
     DrawBox(mn, mx);
   }
 

@@ -6,6 +6,7 @@
 #include "math/MiniMath.h"
 #include "game/GameObject.h"
 #include "game/physics/PhysicsWorld.h"
+#include "game/physics/PhysicsWorldPBD.h"
 
 class Scene {
 public:
@@ -21,6 +22,7 @@ public:
 private:
   std::vector<std::unique_ptr<GameObject>> m_objects;
   PhysicsWorld m_physics;
+  fe::PhysicsWorldPBD m_pbd;
 
   // Cached proxy (fed into PhysicsWorld each frame)
   bool  m_playerSphereValid = false;
