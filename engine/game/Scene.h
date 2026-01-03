@@ -4,9 +4,8 @@
 #include <vector>
 
 #include "math/MiniMath.h"
+#include "game/GameObject.h"
 #include "game/physics/PhysicsWorld.h"
-
-class GameObject;
 
 class Scene {
 public:
