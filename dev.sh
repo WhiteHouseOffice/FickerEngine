@@ -1,29 +1,46 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-echo "== git status =="
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$ROOT"
+
+# Which branch should dev.sh sync to by default?
+# You can override per-run:
+#   FE_BRANCH=work/physics-next ./dev.sh
+BRANCH="${FE_BRANCH:-dev/jump-physics}"
+
+echo "== repo =="
+echo "cwd: $ROOT"
+
+echo "== git status (before) =="
 git status -sb || true
 
-echo "== git pull =="
-git pull
+echo "== sync (fetch + checkout + pull) =="
+# Only attempt branch sync if working tree is clean.
+if ! git diff --quiet || ! git diff --cached --quiet; then
+  echo "(skip) working tree has local changes; not switching branches or pulling."
+else
+  git fetch origin --prune
+
+  # If the remote branch exists, force local branch to track it.
+  if git show-ref --verify --quiet "refs/remotes/origin/$BRANCH"; then
+    # Create/switch local branch to track origin/<BRANCH>
+    git checkout -B "$BRANCH" "origin/$BRANCH"
+    git pull --ff-only
+  else
+    echo "(warn) remote branch origin/$BRANCH not found; skipping pull."
+  fi
+fi
+
+echo "== git status (after) =="
+git status -sb || true
 
 echo "== configure =="
+rm -rf build
 cmake -S . -B build -G Ninja
 
 echo "== build =="
 cmake --build build -j
 
-echo "== find executable =="
-if [[ ! -x build/FickerEngine ]]; then
-  echo "No executable at build/FickerEngine"
-  exit 1
-fi
-
 echo "== run =="
-# Only run if we have a display (X11/Wayland). Codespaces usually doesn't.
-if [[ -n "${DISPLAY:-}" || -n "${WAYLAND_DISPLAY:-}" ]]; then
-  echo "▶ build/FickerEngine"
-  ./build/FickerEngine
-else
-  echo "No DISPLAY/WAYLAND_DISPLAY detected -> skipping run (build succeeded)."
-fi
+./build/FickerEngine
