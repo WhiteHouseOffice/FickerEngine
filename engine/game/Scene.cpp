@@ -168,26 +168,23 @@ static void DrawOBB(const fe::RigidBoxBody& b) {
 // ------------------------------------------------------------
 static void DrawColoredSurfaceQuad() {
 #ifdef FE_NATIVE
-  // --- FORCE VISIBILITY SANITY CHECK ---
+  static bool once = false;
+  if (!once) {
+    once = true;
+    std::printf("[Scene] DrawColoredSurfaceQuad() running\n");
+    std::fflush(stdout);
+  }
 
   glDisable(GL_LIGHTING);
   glDisable(GL_TEXTURE_2D);
+
+  // keep it "can't miss" for now
   glDisable(GL_CULL_FACE);
-  glDisable(GL_DEPTH_TEST);
+  glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
 
-  // Use identity matrices so we draw directly in clip space
-  glMatrixMode(GL_PROJECTION);
-  glPushMatrix();
-  glLoadIdentity();
-
-  glMatrixMode(GL_MODELVIEW);
-  glPushMatrix();
-  glLoadIdentity();
-
-  // Big quad in NDC (will ALWAYS be visible)
   auto q = ColoredQuad::make(
-    Vec3(0.0f, 0.0f, 0.0f),
-    0.8f, 0.8f,
+    Vec3(0.0f, 1.0f, -5.0f),
+    6.0f, 6.0f,
     ColoredQuad::RGBA(255,   0,   0, 255),
     ColoredQuad::RGBA(0,   255,   0, 255),
     ColoredQuad::RGBA(0,     0, 255, 255),
@@ -196,34 +193,34 @@ static void DrawColoredSurfaceQuad() {
   );
 
   auto unpack = [](uint32_t rgba, float& r, float& g, float& b, float& a) {
-    r = ((rgba >> 24) & 0xFF) / 255.0f;
-    g = ((rgba >> 16) & 0xFF) / 255.0f;
-    b = ((rgba >>  8) & 0xFF) / 255.0f;
-    a = ((rgba >>  0) & 0xFF) / 255.0f;
+    r = float((rgba >> 24) & 0xFF) / 255.0f;
+    g = float((rgba >> 16) & 0xFF) / 255.0f;
+    b = float((rgba >>  8) & 0xFF) / 255.0f;
+    a = float((rgba >>  0) & 0xFF) / 255.0f;
   };
 
   std::vector<engine::render::VertexPC> verts;
+  verts.reserve(q.vertices.size());
   for (const auto& v : q.vertices) {
     float r,g,b,a;
     unpack(v.rgba, r,g,b,a);
-    verts.push_back({ v.pos.x, v.pos.y, 0.0f, r,g,b,a });
+    verts.push_back(engine::render::VertexPC{ v.pos.x, v.pos.y, v.pos.z, r,g,b,a });
   }
 
   std::vector<uint16_t> inds;
-  for (uint32_t i : q.indices) inds.push_back((uint16_t)i);
+  inds.reserve(q.indices.size());
+  for (uint32_t idx : q.indices) inds.push_back((uint16_t)idx);
 
   engine::render::RenderMesh mesh;
   mesh.SetPrimitive(engine::render::RenderMesh::Primitive::Triangles);
   mesh.SetBackfaceCulling(false);
   mesh.SetVertices(verts);
   mesh.SetIndices(inds);
-  mesh.Draw();
 
-  // Restore matrices
-  glPopMatrix();
-  glMatrixMode(GL_PROJECTION);
-  glPopMatrix();
-  glMatrixMode(GL_MODELVIEW);
+  // draw "on top" for visibility
+  glDisable(GL_DEPTH_TEST);
+  mesh.Draw();
+  glEnable(GL_DEPTH_TEST);
 #endif
 }
 
@@ -415,6 +412,13 @@ static void LoadMat4_GL(int mode, const Mat4& M) {
 
 void Scene::renderDebug(const Mat4& view, const Mat4& proj) {
 #ifdef FE_NATIVE
+  static bool once = false;
+  if (!once) {
+    once = true;
+    std::printf("[Scene] renderDebug() running\n");
+    std::fflush(stdout);
+  }
+
   LoadMat4_GL(GL_PROJECTION, proj);
   LoadMat4_GL(GL_MODELVIEW,  view);
 
@@ -434,7 +438,6 @@ void Scene::renderDebug(const Mat4& view, const Mat4& proj) {
     DrawOBB(b);
   }
 
-  // Colored surface quad (triangles + colors)
   DrawColoredSurfaceQuad();
 
   glColor3f(1.f, 1.f, 1.f);
