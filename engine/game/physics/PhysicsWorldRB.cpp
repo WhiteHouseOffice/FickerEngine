@@ -329,14 +329,11 @@ void PhysicsWorldRB::solveVelocity(const Contact& c) {
   RigidBoxBody* B = hasB ? get(c.b) : nullptr;
 
   Vec3 n = c.normal;
-  if (!finite3(n)) return;
-
-  n = safeNormalizeOrZero(n);
-  if (len2(n) < 1e-12f) return;
+  const float n2 = dot3(n, n);
+  if (n2 < 1e-12f) return;
+  n = n * (1.0f / std::sqrt(n2));
 
   Vec3 ra = c.point - A->position;
-  if (!finite3(ra)) return;
-
   Vec3 va = A->linearVelocity + cross(A->angularVelocity, ra);
 
   Vec3 vb{0,0,0};
@@ -346,7 +343,6 @@ void PhysicsWorldRB::solveVelocity(const Contact& c) {
   Mat3 invIBw{};
   if (B) {
     rb = c.point - B->position;
-    if (!finite3(rb)) return;
     vb = B->linearVelocity + cross(B->angularVelocity, rb);
     invMassB = B->invMass;
     invIBw = invInertiaWorld(*B);
@@ -354,75 +350,79 @@ void PhysicsWorldRB::solveVelocity(const Contact& c) {
 
   Vec3 rv = va - vb;
   float vn = dot3(rv, n);
-  if (!finiteF(vn)) return;
   if (vn > 0.f) return; // separating
 
   Mat3 invIAw = invInertiaWorld(*A);
+
+  // effective mass along normal
   Vec3 raXn = cross(ra, n);
   Vec3 termA = mat3Mul(invIAw, raXn);
-  if (!finite3(termA)) return;
   float kA = A->invMass + dot3(cross(termA, ra), n);
 
   float kB = 0.f;
   if (B) {
     Vec3 rbXn = cross(rb, n);
     Vec3 termB = mat3Mul(invIBw, rbXn);
-    if (!finite3(termB)) return;
     kB = invMassB + dot3(cross(termB, rb), n);
   }
 
   float denom = kA + kB;
-  if (!finiteF(denom) || std::fabs(denom) < 1e-8f) return;
+  if (denom <= 1e-8f) return;
 
   float j = -(1.f + restitution) * vn / denom;
-  if (!finiteF(j)) return;
-
   Vec3 impulse = n * j;
-  if (!finite3(impulse)) return;
 
-  // A gets -impulse, B gets +impulse
-  applyImpulse(*A, impulse * -1.f, ra);
-  if (B) applyImpulse(*B, impulse, rb);
+  // ✅ Correct impulse sign:
+  // - dynamic/dynamic: A gets -impulse, B gets +impulse
+  // - dynamic/static:  A gets +impulse
+  if (B) {
+    applyImpulse(*A, impulse * -1.f, ra);
+    applyImpulse(*B, impulse, rb);
+  } else {
+    applyImpulse(*A, impulse, ra);
+  }
 
   // friction (Coulomb)
-  rv = (A->linearVelocity + cross(A->angularVelocity, ra))
-     - (B ? (B->linearVelocity + cross(B->angularVelocity, rb)) : Vec3(0,0,0));
+  rv = (A->linearVelocity + cross(A->angularVelocity, ra)) -
+       (B ? (B->linearVelocity + cross(B->angularVelocity, rb)) : Vec3(0,0,0));
 
   Vec3 t = rv - n * dot3(rv, n);
   float t2 = len2(t);
-  if (finiteF(t2) && t2 > 1e-10f) {
-    t = t * (1.f / std::sqrt(t2));
-    if (!finite3(t)) return;
+  if (t2 > 1e-10f) {
+    float invT = 1.f / std::sqrt(t2);
+    t = t * invT;
 
     Vec3 raXt = cross(ra, t);
     Vec3 termAt = mat3Mul(invIAw, raXt);
-    if (!finite3(termAt)) return;
     float ktA = A->invMass + dot3(cross(termAt, ra), t);
 
     float ktB = 0.f;
     if (B) {
       Vec3 rbXt = cross(rb, t);
       Vec3 termBt = mat3Mul(invIBw, rbXt);
-      if (!finite3(termBt)) return;
       ktB = invMassB + dot3(cross(termBt, rb), t);
     }
 
     float denomT = ktA + ktB;
-    if (!finiteF(denomT) || std::fabs(denomT) < 1e-8f) return;
+    if (denomT > 1e-8f) {
+      float jt = -dot3(rv, t) / denomT;
+      float maxF = friction * j;
+      if (jt >  maxF) jt =  maxF;
+      if (jt < -maxF) jt = -maxF;
 
-    float jt = -dot3(rv, t) / denomT;
-    if (!finiteF(jt)) return;
+      Vec3 impT = t * jt;
 
-    const float maxF = friction * std::fabs(j);
-    jt = std::max(-maxF, std::min(maxF, jt));
-
-    Vec3 impT = t * jt;
-    if (!finite3(impT)) return;
-
-    applyImpulse(*A, impT * -1.f, ra);
-    if (B) applyImpulse(*B, impT, rb);
+      // ✅ Correct friction sign too:
+      if (B) {
+        applyImpulse(*A, impT * -1.f, ra);
+        applyImpulse(*B, impT, rb);
+      } else {
+        applyImpulse(*A, impT, ra);
+      }
+    }
   }
 
+  // wake on contact
   A->asleep = false;
   A->sleepTimer = 0.f;
   if (B) { B->asleep=false; B->sleepTimer=0.f; }
