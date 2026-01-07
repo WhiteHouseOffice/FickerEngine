@@ -143,9 +143,10 @@ template <typename RB>
 static void SpawnCrates(RB& rb) {
   // Lift them slightly so they don't start in an exact "touching contact" state.
   // This avoids solver singularities on frame 1.
-  rb.createBox(Vec3(0.0f, 1.36f, 0.0f), Vec3(0.50f, 0.50f, 0.50f), 2.0f);
-  rb.createBox(Vec3(0.0f, 2.42f, 0.0f), Vec3(0.50f, 0.50f, 0.50f), 2.0f);
-  rb.createBox(Vec3(3.75f, 2.16f, 0.0f), Vec3(0.50f, 0.50f, 0.50f), 2.0f);
+  rb.createBox(Vec3(0.0f, 5.0f, 0.0f), Vec3(0.50f, 0.50f, 0.50f), 2.0f);
+  rb.createBox(Vec3(0.0f, 6.2f, 0.0f), Vec3(0.50f, 0.50f, 0.50f), 2.0f);
+  rb.createBox(Vec3(3.75f, 5.6f, 0.0f), Vec3(0.50f, 0.50f, 0.50f), 2.0f);
+
 }
 
 void Scene::init() {
@@ -217,10 +218,6 @@ void Scene::update(float dt) {
   const float inDt = dt;
   if (dt > maxDt) dt = maxDt;
 
-  if (s_frames < 60) {
-    std::printf("[Scene] dt in=%f clamped=%f fixed=%f maxDt=%f\n", inDt, dt, fixed, maxDt);
-  }
-
   // --- Proper fixed-step accumulator: only ever step with fixedDt ---
   s_accum += dt;
   if (s_accum > maxDt) s_accum = maxDt;
@@ -232,23 +229,31 @@ void Scene::update(float dt) {
     steps++;
   }
 
-  // --- Quick NaN detection: if any body goes non-finite, respawn crates ---
-  const auto& bodies = m_rb.bodies();
-  bool bad = false;
-  for (int i = 0; i < (int)bodies.size() && i < 3; ++i) {
-    if (!fe_isfinite3(bodies[i].position)) {
-      bad = true;
-      break;
-    }
-  }
+  // --- Quick NaN detection: if any body goes non-finite, respawn crates (with cooldown) ---
+static int s_nanCooldown = 0; // frames
+const auto& bodies = m_rb.bodies();
 
-  if (bad) {
-    std::printf("[Scene] NaN detected -> respawn crates\n");
-    // We can’t reliably “reset world” without knowing your API,
-    // but respawning above contact at least keeps the scene usable.
-    SpawnCrates(m_rb);
-  }
+bool bad = false;
+for (int i = 0; i < (int)bodies.size() && i < 3; ++i) {
+  if (!fe_isfinite3(bodies[i].position)) { bad = true; break; }
+}
 
+if (s_nanCooldown > 0) s_nanCooldown--;
+
+if (bad && s_nanCooldown == 0) {
+  std::printf("[Scene] NaN detected -> respawn crates\n");
+
+  // IMPORTANT: reset accumulator so we don't instantly replay a big backlog of steps
+  s_accum = 0.0f;
+
+  SpawnCrates(m_rb);
+
+  // Cooldown ~1 second at 60fps (prevents print spam + respawn loop)
+  s_nanCooldown = 60;
+
+  // Skip the rest of the update this frame
+  return;
+}
   // Player collision
   m_playerCenterOut = m_playerCenter;
   m_playerVelOut = m_playerVel;
