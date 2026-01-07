@@ -560,7 +560,7 @@ void PhysicsWorldRB::solveVelocity(const Contact& c) {
     float denomT = ktA + ktB;
     if (denomT > 1e-8f) {
       float jt = -dot3(rv, t) / denomT;
-      float maxF = friction * j;
+      float maxF = friction * std::max(j, 0.5f); // small floor prevents micro-creep
       if (jt >  maxF) jt =  maxF;
       if (jt < -maxF) jt = -maxF;
 
@@ -615,7 +615,9 @@ void PhysicsWorldRB::updateSleeping(RigidBoxBody& b, float h) {
 
   const float v2 = len2(b.linearVelocity);
   const float w2 = len2(b.angularVelocity);
-
+  
+  if (v2 < 1e-4f) b.linearVelocity = Vec3(0,0,0);
+  if (w2 < 1e-4f) b.angularVelocity = Vec3(0,0,0);
   if (v2 < b.sleepVel*b.sleepVel && w2 < b.sleepAngVel*b.sleepAngVel) {
     b.sleepTimer += h;
     if (b.sleepTimer >= b.sleepTime) {
