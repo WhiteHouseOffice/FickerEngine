@@ -278,7 +278,7 @@ static bool satOBBOBB(const RigidBoxBody& A, const RigidBoxBody& B, Vec3& outN, 
 
     if (pen < bestPen) {
       bestPen = pen;
-      bestAxis = (dot3(d, a) < 0.f) ? (a * -1.f) : a;
+      bestAxis = (dot3(d, a) < 0.f) ? a : (a * -1.f);
     }
   }
 
@@ -483,8 +483,10 @@ void PhysicsWorldRB::solveVelocity(const Contact& c) {
   if (j > maxJ) j = maxJ;
 
   Vec3 impulse = n * j;
-  applyImpulse(*A, impulse * -1.f, ra);
-  if (B) applyImpulse(*B, impulse, rb);
+  // Normal is B->A, so A gets +impulse, B gets -impulse
+  applyImpulse(*A, impulse, ra);
+  if (B) applyImpulse(*B, impulse * -1.f, rb);
+
 
   // friction
   rv = (A->linearVelocity + cross(A->angularVelocity, ra)) - (B ? (B->linearVelocity + cross(B->angularVelocity, rb)) : Vec3(0,0,0));
@@ -512,8 +514,8 @@ void PhysicsWorldRB::solveVelocity(const Contact& c) {
       if (jt < -maxF) jt = -maxF;
 
       Vec3 impT = t * jt;
-      applyImpulse(*A, impT * -1.f, ra);
-      if (B) applyImpulse(*B, impT, rb);
+      applyImpulse(*A, impT, ra);
+      if (B) applyImpulse(*B, impT * -1.f, rb);
     }
   }
 
@@ -548,8 +550,9 @@ void PhysicsWorldRB::solvePosition(const Contact& c) {
     corr = corr * (maxCorr / std::sqrt(c2));
   }
 
-  if (A->isDynamic()) A->position = A->position - corr * wA;
-  if (B && B->isDynamic()) B->position = B->position + corr * wB;
+  // Normal is B->A, so A moves along +n, B along -n
+if (A->isDynamic()) A->position = A->position + corr * wA;
+if (B && B->isDynamic()) B->position = B->position - corr * wB;
 
   // sanitize immediately after correction (this is where "finite but insane" often happens)
   sanitizeBody(*A, "solvePosition:A");
