@@ -220,29 +220,13 @@ void Scene::render(const Mat4& view, const Mat4& proj) {
 
 static void LoadMat4_GL(int mode, const Mat4& M) {
 #ifdef FE_NATIVE
-  // Your Mat4 stores floats in a flat array (likely row-major).
-  // We'll upload as column-major for legacy OpenGL by transposing.
-
-  float f[16];
-
-  // Interpret M.m as row-major: M(row, col) = M.m[row*4 + col]
-  auto at = [&](int r, int c) -> float {
-    return M.m[r * 4 + c];
-  };
-
-  // Build column-major array for OpenGL:
-  // f[col*4 + row] = at(row, col)
-  f[0]  = at(0,0); f[4]  = at(0,1); f[8]  = at(0,2); f[12] = at(0,3);
-  f[1]  = at(1,0); f[5]  = at(1,1); f[9]  = at(1,2); f[13] = at(1,3);
-  f[2]  = at(2,0); f[6]  = at(2,1); f[10] = at(2,2); f[14] = at(2,3);
-  f[3]  = at(3,0); f[7]  = at(3,1); f[11] = at(3,2); f[15] = at(3,3);
-
   glMatrixMode(mode);
-  glLoadMatrixf(f);
+  glLoadMatrixf(M.m);   // <-- no transpose
 #else
   (void)mode; (void)M;
 #endif
 }
+
 
 
 
