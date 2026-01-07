@@ -168,56 +168,62 @@ static void DrawOBB(const fe::RigidBoxBody& b) {
 // ------------------------------------------------------------
 static void DrawColoredSurfaceQuad() {
 #ifdef FE_NATIVE
-  // Make sure fixed-function state doesn't override vertex colors.
+  // --- FORCE VISIBILITY SANITY CHECK ---
+
   glDisable(GL_LIGHTING);
   glDisable(GL_TEXTURE_2D);
+  glDisable(GL_CULL_FACE);
+  glDisable(GL_DEPTH_TEST);
 
-  // MOVE IT IN FRONT OF CAMERA + MAKE IT BIG (hard to miss)
+  // Use identity matrices so we draw directly in clip space
+  glMatrixMode(GL_PROJECTION);
+  glPushMatrix();
+  glLoadIdentity();
+
+  glMatrixMode(GL_MODELVIEW);
+  glPushMatrix();
+  glLoadIdentity();
+
+  // Big quad in NDC (will ALWAYS be visible)
   auto q = ColoredQuad::make(
-    Vec3(0.0f, 1.0f, -5.0f),
-    6.0f, 6.0f,
-    ColoredQuad::RGBA(255,   0,   0, 255), // red
-    ColoredQuad::RGBA(0,   255,   0, 255), // green
-    ColoredQuad::RGBA(0,     0, 255, 255), // blue
-    ColoredQuad::RGBA(255, 255,   0, 255), // yellow
-    true // CCW
+    Vec3(0.0f, 0.0f, 0.0f),
+    0.8f, 0.8f,
+    ColoredQuad::RGBA(255,   0,   0, 255),
+    ColoredQuad::RGBA(0,   255,   0, 255),
+    ColoredQuad::RGBA(0,     0, 255, 255),
+    ColoredQuad::RGBA(255, 255,   0, 255),
+    true
   );
 
   auto unpack = [](uint32_t rgba, float& r, float& g, float& b, float& a) {
-    r = float((rgba >> 24) & 0xFF) / 255.0f;
-    g = float((rgba >> 16) & 0xFF) / 255.0f;
-    b = float((rgba >>  8) & 0xFF) / 255.0f;
-    a = float((rgba >>  0) & 0xFF) / 255.0f;
+    r = ((rgba >> 24) & 0xFF) / 255.0f;
+    g = ((rgba >> 16) & 0xFF) / 255.0f;
+    b = ((rgba >>  8) & 0xFF) / 255.0f;
+    a = ((rgba >>  0) & 0xFF) / 255.0f;
   };
 
   std::vector<engine::render::VertexPC> verts;
-  verts.reserve(q.vertices.size());
-
   for (const auto& v : q.vertices) {
-    float r, g, b, a;
-    unpack(v.rgba, r, g, b, a);
-    verts.push_back(engine::render::VertexPC{ v.pos.x, v.pos.y, v.pos.z, r, g, b, a });
+    float r,g,b,a;
+    unpack(v.rgba, r,g,b,a);
+    verts.push_back({ v.pos.x, v.pos.y, 0.0f, r,g,b,a });
   }
 
   std::vector<uint16_t> inds;
-  inds.reserve(q.indices.size());
-  for (uint32_t idx : q.indices) inds.push_back((uint16_t)idx);
+  for (uint32_t i : q.indices) inds.push_back((uint16_t)i);
 
   engine::render::RenderMesh mesh;
   mesh.SetPrimitive(engine::render::RenderMesh::Primitive::Triangles);
-
-  // DISABLE CULLING FOR NOW (so winding can’t hide it)
   mesh.SetBackfaceCulling(false);
-
   mesh.SetVertices(verts);
   mesh.SetIndices(inds);
-
-  // DISABLE DEPTH TEST JUST FOR THIS DRAW (so it can’t be hidden)
-  glDisable(GL_DEPTH_TEST);
   mesh.Draw();
-  glEnable(GL_DEPTH_TEST);
-#else
-  // no-op on web path for now
+
+  // Restore matrices
+  glPopMatrix();
+  glMatrixMode(GL_PROJECTION);
+  glPopMatrix();
+  glMatrixMode(GL_MODELVIEW);
 #endif
 }
 
