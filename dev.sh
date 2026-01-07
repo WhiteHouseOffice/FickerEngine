@@ -4,6 +4,16 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT_DIR"
 
+branch="$(git branch --show-current)"
+if [[ -n "$branch" ]]; then
+  git fetch --all --prune >/dev/null 2>&1 || true
+  if ! git rev-parse --abbrev-ref --symbolic-full-name "@{u}" >/dev/null 2>&1; then
+    git push -u origin "$branch" || true
+  else
+    git push || true
+  fi
+fi
+
 echo "== git status =="
 git status --porcelain=v1 -b || true
 
