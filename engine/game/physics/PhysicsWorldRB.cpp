@@ -11,6 +11,7 @@ namespace fe {
 // ============================================================
 static inline float dot3(const Vec3& a, const Vec3& b){ return a.x*b.x + a.y*b.y + a.z*b.z; }
 static inline float len2(const Vec3& v){ return dot3(v,v); }
+static inline float clampf(float x, float a, float b) { return (x < a) ? a : (x > b ? b : x); }
 
 static inline bool finite1(float f) { return std::isfinite(f); }
 static inline bool finite3(const Vec3& v) {
@@ -37,6 +38,73 @@ static inline Quat safeQuatNormalize(const Quat& q) {
   if (!finite1(l2) || l2 < 1e-20f) return Quat::identity();
   float inv = 1.0f / std::sqrt(l2);
   return Quat{ q.w*inv, q.x*inv, q.y*inv, q.z*inv };
+}
+
+// Small “don’t jitter when resting” thresholds
+static constexpr float kSupportNMin      = 0.75f;  // normal.y must be >= this to count as support
+static constexpr float kSupportSkin      = 0.06f;  // allow near-contact
+static constexpr float kRestLinVel       = 0.25f;  // below => we can damp
+static constexpr float kRestAngVel       = 1.25f;  // below => we can damp
+static constexpr float kRestDampLin      = 0.55f;  // how strongly we kill small lateral drift per substep
+static constexpr float kRestDampAng      = 0.55f;  // how strongly we kill small ang drift per substep
+static constexpr float kMaxPlayerPushJ   = 22.0f;  // walking push cap
+static constexpr float kPlayerPushScale  = 70.0f;  // walking push strength
+
+// ============================================================
+// Simple 2D convex hull + point-in-convex (XZ plane)
+// ============================================================
+struct V2 { float x, z; };
+
+static inline float cross2(const V2& a, const V2& b, const V2& c) {
+  // (b-a) x (c-a)
+  return (b.x - a.x) * (c.z - a.z) - (b.z - a.z) * (c.x - a.x);
+}
+
+static void convexHullXZ(const std::vector<V2>& pts, std::vector<V2>& hull) {
+  hull.clear();
+  if (pts.size() < 3) { hull = pts; return; }
+
+  std::vector<V2> p = pts;
+  std::sort(p.begin(), p.end(), [](const V2& a, const V2& b){
+    if (a.x != b.x) return a.x < b.x;
+    return a.z < b.z;
+  });
+
+  std::vector<V2> lower, upper;
+  lower.reserve(p.size());
+  upper.reserve(p.size());
+
+  for (const auto& v : p) {
+    while (lower.size() >= 2 && cross2(lower[lower.size()-2], lower[lower.size()-1], v) <= 0.f) lower.pop_back();
+    lower.push_back(v);
+  }
+  for (int i = (int)p.size() - 1; i >= 0; --i) {
+    const auto& v = p[(size_t)i];
+    while (upper.size() >= 2 && cross2(upper[upper.size()-2], upper[upper.size()-1], v) <= 0.f) upper.pop_back();
+    upper.push_back(v);
+  }
+
+  lower.pop_back();
+  upper.pop_back();
+  hull = lower;
+  hull.insert(hull.end(), upper.begin(), upper.end());
+}
+
+static bool pointInConvexXZ(const std::vector<V2>& hull, const V2& p) {
+  if (hull.size() < 3) return false;
+  // For convex polygon, check all edges have same orientation
+  float sign = 0.f;
+  for (size_t i=0;i<hull.size();++i) {
+    const V2& a = hull[i];
+    const V2& b = hull[(i+1) % hull.size()];
+    float c = (b.x - a.x) * (p.z - a.z) - (b.z - a.z) * (p.x - a.x);
+    if (std::fabs(c) < 1e-6f) continue;
+    if (sign == 0.f) sign = (c > 0.f) ? 1.f : -1.f;
+    else {
+      if ((c > 0.f && sign < 0.f) || (c < 0.f && sign > 0.f)) return false;
+    }
+  }
+  return true;
 }
 
 // ============================================================
@@ -85,7 +153,7 @@ Mat3 PhysicsWorldRB::invInertiaWorld(const RigidBoxBody& b) const {
 void PhysicsWorldRB::applyImpulse(RigidBoxBody& b, const Vec3& impulse, const Vec3& r) {
   if (!b.isDynamic()) return;
 
-  // Wake on meaningful impulse (fixes "sometimes I can't push")
+  // Wake on meaningful impulse (fixes "sometimes can't push")
   if (b.asleep && len2(impulse) > 1e-6f) {
     b.asleep = false;
     b.sleepTimer = 0.f;
@@ -161,7 +229,7 @@ static float projectRadius(const RigidBoxBody& b, const Vec3& axis) {
 }
 
 // SAT for OBB vs OBB.
-// IMPORTANT: outN points from B -> A (matches solver: A += impulse, B -= impulse)
+// outN points from B -> A (solver uses A += impulse, B -= impulse)
 static bool satOBBOBB(const RigidBoxBody& A, const RigidBoxBody& B, Vec3& outN, float& outPen) {
   Vec3 Ax, Ay, Az; computeOBBAxes(A, Ax, Ay, Az);
   Vec3 Bx, By, Bz; computeOBBAxes(B, Bx, By, Bz);
@@ -271,7 +339,7 @@ void PhysicsWorldRB::contactsBoxGround(const RigidBoxBody& A, std::vector<Contac
 }
 
 void PhysicsWorldRB::contactsBoxStaticAABB(const RigidBoxBody& A, const AABB& S, std::vector<Contact>& out) {
-  // Stable top-face support manifold WITH edge tolerance + clamped contact point
+  // Top support manifold with edge tolerance + clamped point
   const float topY = S.max.y;
 
   Vec3 ax, ay, az;
@@ -290,33 +358,26 @@ void PhysicsWorldRB::contactsBoxStaticAABB(const RigidBoxBody& A, const AABB& S,
     minY = std::min(minY, v.y);
   }
 
-  const float skin = 0.06f;
-  if (minY > topY + skin) return;
+  if (minY > topY + kSupportSkin) return;
 
-  // Don't generate "support" if moving upward quickly (reduces pop/yeet)
+  // prevent support if body is moving upward quickly (reduces “pop”)
   if (A.linearVelocity.y > 0.5f) return;
 
   const float bottomEps = 0.02f;
-  const float edgeTol   = 0.08f; // allows slight overhang before losing support
+  const float edgeTol   = 0.10f; // slightly forgiving support for slight overhang
 
   int emitted = 0;
   for (int i=0; i<8 && emitted<4; ++i) {
     const Vec3& v = verts[i];
     if (v.y > minY + bottomEps) continue;
 
-    // If far outside, no support.
     if (v.x < S.min.x - edgeTol || v.x > S.max.x + edgeTol) continue;
     if (v.z < S.min.z - edgeTol || v.z > S.max.z + edgeTol) continue;
 
-    // Clamp the contact point onto the platform top footprint
-    float px = v.x;
-    float pz = v.z;
-    if (px < S.min.x) px = S.min.x;
-    if (px > S.max.x) px = S.max.x;
-    if (pz < S.min.z) pz = S.min.z;
-    if (pz > S.max.z) pz = S.max.z;
+    float px = clampf(v.x, S.min.x, S.max.x);
+    float pz = clampf(v.z, S.min.z, S.max.z);
 
-    if (v.y <= topY + skin) {
+    if (v.y <= topY + kSupportSkin) {
       Contact c;
       c.a = A.id;
       c.b = 0;
@@ -487,13 +548,108 @@ void PhysicsWorldRB::solvePosition(const Contact& c) {
 }
 
 // ============================================================
-// Player collision (push fixed + less edge yeet)
+// COM-support stabilization pass (the “upgrade”)
+// ============================================================
+static void stabilizeSupportedBodies(std::vector<RigidBoxBody>& bodies,
+                                    const std::vector<Contact>& contacts,
+                                    const std::vector<AABB>& statics) {
+  const size_t n = bodies.size();
+  if (n == 0) return;
+
+  std::vector<uint8_t> supported(n, 0);
+
+  // Collect support points (XZ) per body
+  std::vector<std::vector<V2>> supportPts(n);
+
+  auto findIndexById = [&](uint32_t id) -> int {
+    for (int i=0;i<(int)bodies.size();++i) if (bodies[(size_t)i].id == id) return i;
+    return -1;
+  };
+
+  // 1) Contacts-based support (ground, static-top, box-on-box)
+  for (const auto& c : contacts) {
+    // Support means normal points upward enough for A
+    if (c.normal.y < kSupportNMin) continue;
+    if (c.penetration < -kSupportSkin) continue;
+
+    int ia = findIndexById(c.a);
+    if (ia < 0) continue;
+
+    supportPts[(size_t)ia].push_back(V2{c.point.x, c.point.z});
+  }
+
+  // 2) Determine support by COM-in-support-polygon (or static footprint as a fallback)
+  for (size_t i=0;i<n;++i) {
+    const auto& b = bodies[i];
+    if (!b.isDynamic()) continue;
+
+    const V2 com{ b.position.x, b.position.z };
+
+    // If we have enough points, check convex support hull
+    if (supportPts[i].size() >= 3) {
+      std::vector<V2> hull;
+      convexHullXZ(supportPts[i], hull);
+      if (pointInConvexXZ(hull, com)) supported[i] = 1;
+    }
+
+    // If no hull support, also accept support if COM is within any static top footprint
+    // AND we're near its top plane (cheap “platform support”)
+    if (!supported[i]) {
+      for (const auto& s : statics) {
+        if (com.x >= s.min.x && com.x <= s.max.x &&
+            com.z >= s.min.z && com.z <= s.max.z) {
+          // near top
+          if (b.position.y >= s.max.y - 2.0f && b.position.y <= s.max.y + 2.0f) {
+            // not moving upward quickly
+            if (b.linearVelocity.y <= 0.5f) {
+              supported[i] = 1;
+              break;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // 3) Stabilize: kill tiny lateral/ang jitter while supported (prevents the “landing nudge”)
+  for (size_t i=0;i<n;++i) {
+    if (!supported[i]) continue;
+    auto& b = bodies[i];
+    if (!b.isDynamic()) continue;
+
+    // Only damp when already nearly resting (don’t fight real motion)
+    Vec3 lv = b.linearVelocity;
+    Vec3 av = b.angularVelocity;
+
+    const float lv2 = len2(lv);
+    const float av2 = len2(av);
+
+    // Lateral-only damping (keep y so jumps remain)
+    Vec3 lateral(lv.x, 0.f, lv.z);
+    float lat2 = len2(lateral);
+
+    if (lat2 < kRestLinVel*kRestLinVel) {
+      b.linearVelocity.x *= (1.f - kRestDampLin);
+      b.linearVelocity.z *= (1.f - kRestDampLin);
+    }
+
+    if (av2 < kRestAngVel*kRestAngVel) {
+      // Kill small ang jitter (keeps stacks aligned)
+      b.angularVelocity.x *= (1.f - kRestDampAng);
+      b.angularVelocity.y *= (1.f - kRestDampAng);
+      b.angularVelocity.z *= (1.f - kRestDampAng);
+    }
+  }
+}
+
+// ============================================================
+// Player collision (push that works for walking + avoids edge rockets)
 // ============================================================
 bool PhysicsWorldRB::collidePlayerSphere(Vec3& center, float radius, Vec3& playerVel, bool* outGrounded) {
   bool hit = false;
   bool grounded = false;
 
-  Vec3 playerVelIn = playerVel; // IMPORTANT
+  Vec3 playerVelIn = playerVel;
 
   for (auto& b : m_bodies) {
     if (!b.isDynamic()) continue;
@@ -513,10 +669,10 @@ bool PhysicsWorldRB::collidePlayerSphere(Vec3& center, float radius, Vec3& playe
     if (d2 >= radius*radius || d2 < 1e-10f) continue;
 
     float dist = std::sqrt(d2);
-    Vec3 nRaw = delta * (1.f / dist); // points box -> player
+    Vec3 nRaw = delta * (1.f / dist); // box -> player
     Vec3 nRes = nRaw;
 
-    // Prevent weird vertical shove when walking into edges
+    // Don’t push player down/up when walking into sides
     if (std::fabs(nRes.y) < 0.5f) {
       nRes.y = 0.f;
       safeNormalize(nRes);
@@ -527,18 +683,18 @@ bool PhysicsWorldRB::collidePlayerSphere(Vec3& center, float radius, Vec3& playe
     float vn = dot3(playerVel, nRes);
     if (vn < 0.f) playerVel -= nRes * vn;
 
-    // Push the box away from the player:
+    // Walking push: impulse away from player
     // nh points box->player, so impulse must be -nh.
     Vec3 nh(nRaw.x, 0.0f, nRaw.z);
     if (safeNormalize(nh)) {
-      // only side-ish hits (avoid jump/corner yeet)
-      if (std::fabs(nRaw.y) < 0.6f) {
+      // only mostly-side hits to avoid jump-edge rockets
+      if (std::fabs(nRaw.y) < 0.65f) {
         float vInto = -dot3(playerVelIn, nh); // >0 when moving toward box
         if (vInto > 0.f) {
-          float j = 50.f * vInto;
-          if (j > 12.f) j = 12.f;
+          float j = kPlayerPushScale * vInto;
+          if (j > kMaxPlayerPushJ) j = kMaxPlayerPushJ;
 
-          // Apply at COM to avoid crazy spin from corner hits
+          // Apply at COM to reduce “spin rockets”
           applyImpulse(b, nh * (-j), Vec3(0,0,0));
           b.asleep = false;
           b.sleepTimer = 0.f;
@@ -568,6 +724,9 @@ void PhysicsWorldRB::substep(float h) {
 
   for (int it=0; it<positionIters; ++it)
     for (const auto& c : contacts) solvePosition(c);
+
+  // *** Upgrade pass ***
+  stabilizeSupportedBodies(m_bodies, contacts, m_static);
 }
 
 void PhysicsWorldRB::step(float dt) {
