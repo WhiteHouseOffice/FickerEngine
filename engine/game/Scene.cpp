@@ -206,7 +206,7 @@ static void DrawColoredSurfaceBox() {
   engine::render::RenderMesh mesh;
   mesh.SetPrimitive(engine::render::RenderMesh::Primitive::Triangles);
   mesh.SetBackfaceCulling(true);
-  mesh.SetFrontFaceWinding(engine::render::RenderMesh::Winding::CCW);
+  mesh.SetFrontFaceWinding(engine::render::RenderMesh::Winding::CW);
   mesh.SetVertices(verts);
   mesh.SetIndices(inds);
   mesh.Draw();
