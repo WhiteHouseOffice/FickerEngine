@@ -11,7 +11,12 @@ class Scene {
 public:
   void init();
   void update(float dt);
-
+// Rendering split is intentional:
+// - render(): real game rendering (RenderMesh, triangles, shipping visuals)
+// - renderDebug(): developer-only overlays (grid, colliders, physics gizmos)
+//
+// render() may be empty during early engine bring-up.
+// Do NOT move debug drawing into render().
   void render(const Mat4& view, const Mat4& proj);
   void renderDebug(const Mat4& view, const Mat4& proj);
 
