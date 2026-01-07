@@ -22,12 +22,10 @@ void RenderMesh::SetIndices(const std::vector<uint16_t>& inds) {
   m_indices = inds;
 }
 
-// NEW
 void RenderMesh::SetBackfaceCulling(bool enabled) {
   m_backfaceCull = enabled;
 }
 
-// NEW
 void RenderMesh::SetFrontFaceWinding(Winding winding) {
   m_frontWinding = winding;
 }
@@ -40,7 +38,6 @@ static GLenum ToGLPrimitive(RenderMesh::Primitive p) {
   }
 }
 
-// NEW
 static GLenum ToGLWinding(RenderMesh::Winding w) {
   switch (w) {
     case RenderMesh::Winding::CCW: return GL_CCW;
@@ -54,7 +51,7 @@ void RenderMesh::Draw() const {
 
   const GLenum glPrim = ToGLPrimitive(m_primitive);
 
-  // NEW: backface culling (only meaningful for filled triangles)
+  // Backface culling for triangle surfaces
   if (m_primitive == Primitive::Triangles && m_backfaceCull) {
     glEnable(GL_CULL_FACE);
     glCullFace(GL_BACK);
@@ -66,14 +63,16 @@ void RenderMesh::Draw() const {
   glEnableClientState(GL_VERTEX_ARRAY);
   glEnableClientState(GL_COLOR_ARRAY);
 
+  // IMPORTANT:
+  // We are using CPU-side arrays (std::vector). The pointer must reference m_vertices.data().
   glVertexPointer(
     3, GL_FLOAT, sizeof(VertexPC),
-    reinterpret_cast<const void*>(offsetof(VertexPC, x))
+    (const void*)(&m_vertices[0].x)
   );
 
   glColorPointer(
     4, GL_FLOAT, sizeof(VertexPC),
-    reinterpret_cast<const void*>(offsetof(VertexPC, r))
+    (const void*)(&m_vertices[0].r)
   );
 
   glDrawElements(
