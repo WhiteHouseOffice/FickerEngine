@@ -4,15 +4,20 @@
 
 namespace fe {
 
-// ------------------------------------------------------------
-// small math helpers
-// ------------------------------------------------------------
-static inline float dot3(const Vec3& a, const Vec3& b){
-  return a.x*b.x + a.y*b.y + a.z*b.z;
+static inline float dot3(const Vec3& a, const Vec3& b){ return a.x*b.x + a.y*b.y + a.z*b.z; }
+static inline float len2(const Vec3& v){ return dot3(v,v); }
+
+static inline bool finiteF(float x) { return std::isfinite(x); }
+static inline bool finite3(const Vec3& v) { return finiteF(v.x) && finiteF(v.y) && finiteF(v.z); }
+
+static inline Vec3 safeNormalizeOrZero(const Vec3& v) {
+  const float l2 = dot3(v,v);
+  if (!finiteF(l2) || l2 < 1e-12f) return Vec3(0,0,0);
+  const float invL = 1.0f / std::sqrt(l2);
+  if (!finiteF(invL)) return Vec3(0,0,0);
+  return v * invL;
 }
-static inline float len2(const Vec3& v){
-  return dot3(v,v);
-}
+
 static inline Vec3 clampVec3(const Vec3& v, const Vec3& mn, const Vec3& mx) {
   return Vec3(
     (v.x < mn.x) ? mn.x : (v.x > mx.x ? mx.x : v.x),
@@ -21,9 +26,6 @@ static inline Vec3 clampVec3(const Vec3& v, const Vec3& mn, const Vec3& mx) {
   );
 }
 
-// ------------------------------------------------------------
-// creation / access
-// ------------------------------------------------------------
 uint32_t PhysicsWorldRB::createBox(const Vec3& pos, const Vec3& halfExtents, float mass) {
   RigidBoxBody b;
   b.id = m_nextId++;
@@ -38,14 +40,12 @@ uint32_t PhysicsWorldRB::createBox(const Vec3& pos, const Vec3& halfExtents, flo
     b.invMass = 0.f;
     b.invInertiaLocal = Mat3{};
   }
-
   m_bodies.push_back(b);
   return b.id;
 }
 
 RigidBoxBody* PhysicsWorldRB::get(uint32_t id) {
-  for (auto& b : m_bodies)
-    if (b.id == id) return &b;
+  for (auto& b : m_bodies) if (b.id == id) return &b;
   return nullptr;
 }
 
@@ -55,147 +55,424 @@ void PhysicsWorldRB::clearDynamics() {
   m_accum = 0.f;
 }
 
-// ------------------------------------------------------------
-// integration
-// ------------------------------------------------------------
-void PhysicsWorldRB::integrate(RigidBoxBody& b, float h) {
-  if (!b.isDynamic() || b.asleep) return;
-
-  if (b.useGravity)
-    b.linearVelocity = b.linearVelocity + gravity * h;
-
-  b.position = b.position + b.linearVelocity * h;
-
-  // angular motion is allowed but safe
-  if (len2(b.angularVelocity) > 0.f) {
-    Quat q = quatNormalize(b.orientation);
-    Vec3 w = b.angularVelocity;
-    Quat dq{0.f, w.x, w.y, w.z};
-    dq = quatMul(dq, q);
-
-    q.w += 0.5f * dq.w * h;
-    q.x += 0.5f * dq.x * h;
-    q.y += 0.5f * dq.y * h;
-    q.z += 0.5f * dq.z * h;
-    b.orientation = quatNormalize(q);
-  }
-
-  // damping
-  b.linearVelocity  = b.linearVelocity  * std::max(0.f, 1.f - b.linearDamping  * h);
-  b.angularVelocity = b.angularVelocity * std::max(0.f, 1.f - b.angularDamping * h);
+Mat3 PhysicsWorldRB::invInertiaWorld(const RigidBoxBody& b) const {
+  // R * I^-1_local * R^T
+  const Quat qn = quatNormalize(b.orientation);
+  const Mat3 R = quatToMat3(qn);
+  const Mat3 Rt = mat3Transpose(R);
+  return mat3Mul(mat3Mul(R, b.invInertiaLocal), Rt);
 }
 
-// ------------------------------------------------------------
-// contacts
-// ------------------------------------------------------------
-void PhysicsWorldRB::contactsBoxGround(const RigidBoxBody& A, std::vector<Contact>& out) {
-  float bottom = A.position.y - A.halfExtents.y;
-  if (bottom < groundY) {
+void PhysicsWorldRB::applyImpulse(RigidBoxBody& b, const Vec3& impulse, const Vec3& r) {
+  if (!b.isDynamic()) return;
+
+  // guard against NaNs entering state
+  if (!finite3(impulse) || !finite3(r)) return;
+
+  b.linearVelocity = b.linearVelocity + impulse * b.invMass;
+
+  const Mat3 invIw = invInertiaWorld(b);
+  const Vec3 dw = mat3Mul(invIw, cross(r, impulse));
+  if (!finite3(dw)) return;
+  b.angularVelocity = b.angularVelocity + dw;
+}
+
+void PhysicsWorldRB::integrateOrientation(RigidBoxBody& b, float h) {
+  Quat q = quatNormalize(b.orientation);
+
+  // If q is already bad, reset it instead of propagating NaNs.
+  if (!std::isfinite(q.w) || !std::isfinite(q.x) || !std::isfinite(q.y) || !std::isfinite(q.z)) {
+    b.orientation = Quat::identity();
+    b.angularVelocity = Vec3(0,0,0);
+    return;
+  }
+
+  const Vec3 w = b.angularVelocity;
+  if (!finite3(w) || !finiteF(h)) return;
+
+  // q' = 0.5 * omegaQuat * q
+  Quat omega{0.f, w.x, w.y, w.z};
+  Quat dq = quatMul(omega, q);
+
+  if (!std::isfinite(dq.w) || !std::isfinite(dq.x) || !std::isfinite(dq.y) || !std::isfinite(dq.z)) return;
+
+  q.w += 0.5f * dq.w * h;
+  q.x += 0.5f * dq.x * h;
+  q.y += 0.5f * dq.y * h;
+  q.z += 0.5f * dq.z * h;
+
+  b.orientation = quatNormalize(q);
+}
+
+void PhysicsWorldRB::applyDamping(RigidBoxBody& b, float h) {
+  if (!finiteF(h)) return;
+  if (b.linearDamping > 0.f) {
+    const float k = std::max(0.f, 1.f - b.linearDamping * h);
+    b.linearVelocity = b.linearVelocity * k;
+  }
+  if (b.angularDamping > 0.f) {
+    const float k = std::max(0.f, 1.f - b.angularDamping * h);
+    b.angularVelocity = b.angularVelocity * k;
+  }
+}
+
+void PhysicsWorldRB::integrate(RigidBoxBody& b, float h) {
+  if (!b.isDynamic() || b.asleep) return;
+  if (!finiteF(h)) return;
+
+  if (b.useGravity) {
+    b.linearVelocity = b.linearVelocity + gravity * h;
+  }
+
+  if (!finite3(b.linearVelocity) || !finite3(b.angularVelocity)) return;
+
+  b.position = b.position + b.linearVelocity * h;
+  if (!finite3(b.position)) return;
+
+  integrateOrientation(b, h);
+  applyDamping(b, h);
+}
+
+static void computeOBBAxes(const RigidBoxBody& b, Vec3& ax, Vec3& ay, Vec3& az) {
+  const Quat qn = quatNormalize(b.orientation);
+  ax = quatRotate(qn, Vec3(1,0,0));
+  ay = quatRotate(qn, Vec3(0,1,0));
+  az = quatRotate(qn, Vec3(0,0,1));
+}
+
+static Vec3 obbVertex(const RigidBoxBody& b, int sx, int sy, int sz) {
+  Vec3 ax,ay,az; computeOBBAxes(b, ax,ay,az);
+  return b.position
+    + ax * (b.halfExtents.x * (float)sx)
+    + ay * (b.halfExtents.y * (float)sy)
+    + az * (b.halfExtents.z * (float)sz);
+}
+
+static bool pointInOBB(const Vec3& p, const RigidBoxBody& b) {
+  Vec3 ax,ay,az; computeOBBAxes(b, ax,ay,az);
+  Vec3 d = p - b.position;
+  const float px = dot3(d, ax);
+  const float py = dot3(d, ay);
+  const float pz = dot3(d, az);
+  const float eps = 1e-4f;
+  return std::fabs(px) <= b.halfExtents.x + eps
+      && std::fabs(py) <= b.halfExtents.y + eps
+      && std::fabs(pz) <= b.halfExtents.z + eps;
+}
+
+static float projectRadius(const RigidBoxBody& b, const Vec3& axis) {
+  Vec3 ax,ay,az; computeOBBAxes(b, ax,ay,az);
+  return std::fabs(dot3(axis, ax)) * b.halfExtents.x
+       + std::fabs(dot3(axis, ay)) * b.halfExtents.y
+       + std::fabs(dot3(axis, az)) * b.halfExtents.z;
+}
+
+static bool satOBBOBB(const RigidBoxBody& A, const RigidBoxBody& B, Vec3& outN, float& outPen) {
+  Vec3 Ax,Ay,Az; computeOBBAxes(A, Ax,Ay,Az);
+  Vec3 Bx,By,Bz; computeOBBAxes(B, Bx,By,Bz);
+
+  Vec3 axes[15] = {
+    Ax,Ay,Az,
+    Bx,By,Bz,
+    cross(Ax,Bx), cross(Ax,By), cross(Ax,Bz),
+    cross(Ay,Bx), cross(Ay,By), cross(Ay,Bz),
+    cross(Az,Bx), cross(Az,By), cross(Az,Bz)
+  };
+
+  Vec3 d = B.position - A.position;
+
+  float bestPen = 1e30f;
+  Vec3 bestAxis{0,1,0};
+
+  for (int i=0;i<15;++i) {
+    Vec3 a = axes[i];
+    const float l2 = len2(a);
+    if (!finiteF(l2) || l2 < 1e-10f) continue;
+
+    const float invL = 1.f / std::sqrt(l2);
+    if (!finiteF(invL)) continue;
+    a = a * invL;
+
+    const float ra = projectRadius(A, a);
+    const float rb = projectRadius(B, a);
+    const float dist = std::fabs(dot3(d, a));
+    const float pen = (ra + rb) - dist;
+
+    if (!finiteF(pen)) return false;
+    if (pen < 0.f) return false;
+
+    if (pen < bestPen) {
+      bestPen = pen;
+      bestAxis = (dot3(d, a) < 0.f) ? (a * -1.f) : a;
+    }
+  }
+
+  outN = bestAxis;
+  outPen = bestPen;
+  return finite3(outN) && finiteF(outPen);
+}
+
+void PhysicsWorldRB::contactsBoxBox(const RigidBoxBody& A, const RigidBoxBody& B, std::vector<Contact>& out) {
+  Vec3 n; float pen;
+  if (!satOBBOBB(A,B,n,pen)) return;
+
+  n = safeNormalizeOrZero(n);
+  if (!finite3(n) || len2(n) < 1e-12f) return;
+  if (!finiteF(pen) || pen < 0.f) return;
+
+  std::vector<Vec3> pts;
+  pts.reserve(16);
+
+  const int s[2]={-1,1};
+  for (int ix: s) for (int iy: s) for (int iz: s) {
+    Vec3 v = obbVertex(A, ix,iy,iz);
+    if (pointInOBB(v,B)) pts.push_back(v);
+  }
+  for (int ix: s) for (int iy: s) for (int iz: s) {
+    Vec3 v = obbVertex(B, ix,iy,iz);
+    if (pointInOBB(v,A)) pts.push_back(v);
+  }
+
+  if (pts.empty()) {
+    Vec3 p = (A.position + B.position) * 0.5f - n * (pen * 0.5f);
+    pts.push_back(p);
+  }
+
+  if (pts.size() > 4) pts.resize(4);
+
+  for (auto& p : pts) {
+    if (!finite3(p)) continue;
     Contact c;
     c.a = A.id;
-    c.b = 0;
-    c.point = Vec3(A.position.x, groundY, A.position.z);
+    c.b = B.id;
+    c.point = p;
+    c.normal = n;
+    c.penetration = pen;
+    out.push_back(c);
+  }
+}
+
+void PhysicsWorldRB::contactsBoxGround(const RigidBoxBody& A, std::vector<Contact>& out) {
+  float minY = 1e30f;
+  Vec3 minP = A.position;
+  const int s[2]={-1,1};
+  for (int ix: s) for (int iy: s) for (int iz: s) {
+    Vec3 v = obbVertex(A, ix,iy,iz);
+    if (v.y < minY) { minY=v.y; minP=v; }
+  }
+  if (minY < groundY) {
+    Contact c;
+    c.a = A.id; c.b = 0;
+    c.point = minP;
     c.normal = Vec3(0,1,0);
-    c.penetration = groundY - bottom;
+    c.penetration = (groundY - minY);
+    if (!finite3(c.point) || !finiteF(c.penetration)) return;
     out.push_back(c);
   }
 }
 
 void PhysicsWorldRB::contactsBoxStaticAABB(const RigidBoxBody& A, const AABB& S, std::vector<Contact>& out) {
-  Vec3 Amn(A.position.x - A.halfExtents.x,
-           A.position.y - A.halfExtents.y,
-           A.position.z - A.halfExtents.z);
-  Vec3 Amx(A.position.x + A.halfExtents.x,
-           A.position.y + A.halfExtents.y,
-           A.position.z + A.halfExtents.z);
+  const int s[2]={-1,1};
+  for (int ix: s) for (int iy: s) for (int iz: s) {
+    Vec3 v = obbVertex(A, ix,iy,iz);
+    Vec3 cl = clampVec3(v, S.min, S.max);
+    Vec3 d = v - cl;
+    float d2 = len2(d);
+    if (d2 <= 1e-10f) {
+      float px = std::min(v.x - S.min.x, S.max.x - v.x);
+      float py = std::min(v.y - S.min.y, S.max.y - v.y);
+      float pz = std::min(v.z - S.min.z, S.max.z - v.z);
+      Vec3 n(0,1,0);
+      float pen = py;
+      if (px < pen) { pen=px; n = (v.x - (S.min.x+S.max.x)*0.5f) < 0 ? Vec3(-1,0,0) : Vec3(1,0,0); }
+      if (pz < pen) { pen=pz; n = (v.z - (S.min.z+S.max.z)*0.5f) < 0 ? Vec3(0,0,-1) : Vec3(0,0,1); }
 
-  if (Amx.x < S.min.x || Amn.x > S.max.x) return;
-  if (Amx.y < S.min.y || Amn.y > S.max.y) return;
-  if (Amx.z < S.min.z || Amn.z > S.max.z) return;
+      if (!finiteF(pen) || pen < 0.f) continue;
 
-  float px = std::min(S.max.x - Amn.x, Amx.x - S.min.x);
-  float py = std::min(S.max.y - Amn.y, Amx.y - S.min.y);
-  float pz = std::min(S.max.z - Amn.z, Amx.z - S.min.z);
-
-  Vec3 n(0,1,0);
-  float pen = py;
-
-  if (px < pen) {
-    pen = px;
-    n = (A.position.x < (S.min.x+S.max.x)*0.5f) ? Vec3(-1,0,0) : Vec3(1,0,0);
+      Contact c;
+      c.a = A.id; c.b = 0;
+      c.point = v;
+      c.normal = n;
+      c.penetration = pen;
+      if (!finite3(c.point)) continue;
+      out.push_back(c);
+      if (out.size() >= 4) break;
+    }
   }
-  if (pz < pen) {
-    pen = pz;
-    n = (A.position.z < (S.min.z+S.max.z)*0.5f) ? Vec3(0,0,-1) : Vec3(0,0,1);
-  }
-
-  Contact c;
-  c.a = A.id;
-  c.b = 0;
-  c.point = A.position;
-  c.normal = n;
-  c.penetration = pen;
-  out.push_back(c);
 }
 
 void PhysicsWorldRB::gatherContacts(std::vector<Contact>& out) {
   out.clear();
+  out.reserve(64);
 
   for (auto& b : m_bodies) {
     if (!b.isDynamic() || b.asleep) continue;
+    if (enableGround) contactsBoxGround(b, out);
+    for (const auto& s : m_static) contactsBoxStaticAABB(b, s, out);
+  }
 
-    if (enableGround)
-      contactsBoxGround(b, out);
-
-    for (const auto& s : m_static)
-      contactsBoxStaticAABB(b, s, out);
+  for (size_t i=0;i<m_bodies.size();++i) {
+    for (size_t j=i+1;j<m_bodies.size();++j) {
+      const auto& A = m_bodies[i];
+      const auto& B = m_bodies[j];
+      if ((!A.isDynamic() && !B.isDynamic()) || (A.asleep && B.asleep)) continue;
+      contactsBoxBox(A,B,out);
+    }
   }
 }
 
-// ------------------------------------------------------------
-// solvers
-// ------------------------------------------------------------
 void PhysicsWorldRB::solveVelocity(const Contact& c) {
   RigidBoxBody* A = get(c.a);
-  if (!A || !A->isDynamic()) return;
+  if (!A) return;
+
+  const bool hasB = (c.b != 0);
+  RigidBoxBody* B = hasB ? get(c.b) : nullptr;
 
   Vec3 n = c.normal;
-  float vn = dot3(A->linearVelocity, n);
-  if (vn < 0.f)
-    A->linearVelocity = A->linearVelocity - n * vn;
+  if (!finite3(n)) return;
 
-  // friction
-  Vec3 v = A->linearVelocity;
-  Vec3 t = v - n * dot3(v,n);
-  float t2 = len2(t);
-  if (t2 > 1e-8f) {
-    t = t * (1.f / std::sqrt(t2));
-    A->linearVelocity = A->linearVelocity - t * (friction * vn);
+  n = safeNormalizeOrZero(n);
+  if (len2(n) < 1e-12f) return;
+
+  Vec3 ra = c.point - A->position;
+  if (!finite3(ra)) return;
+
+  Vec3 va = A->linearVelocity + cross(A->angularVelocity, ra);
+
+  Vec3 vb{0,0,0};
+  Vec3 rb{0,0,0};
+
+  float invMassB = 0.f;
+  Mat3 invIBw{};
+  if (B) {
+    rb = c.point - B->position;
+    if (!finite3(rb)) return;
+    vb = B->linearVelocity + cross(B->angularVelocity, rb);
+    invMassB = B->invMass;
+    invIBw = invInertiaWorld(*B);
   }
+
+  Vec3 rv = va - vb;
+  float vn = dot3(rv, n);
+  if (!finiteF(vn)) return;
+  if (vn > 0.f) return; // separating
+
+  Mat3 invIAw = invInertiaWorld(*A);
+  Vec3 raXn = cross(ra, n);
+  Vec3 termA = mat3Mul(invIAw, raXn);
+  if (!finite3(termA)) return;
+  float kA = A->invMass + dot3(cross(termA, ra), n);
+
+  float kB = 0.f;
+  if (B) {
+    Vec3 rbXn = cross(rb, n);
+    Vec3 termB = mat3Mul(invIBw, rbXn);
+    if (!finite3(termB)) return;
+    kB = invMassB + dot3(cross(termB, rb), n);
+  }
+
+  float denom = kA + kB;
+  if (!finiteF(denom) || std::fabs(denom) < 1e-8f) return;
+
+  float j = -(1.f + restitution) * vn / denom;
+  if (!finiteF(j)) return;
+
+  Vec3 impulse = n * j;
+  if (!finite3(impulse)) return;
+
+  // A gets -impulse, B gets +impulse
+  applyImpulse(*A, impulse * -1.f, ra);
+  if (B) applyImpulse(*B, impulse, rb);
+
+  // friction (Coulomb)
+  rv = (A->linearVelocity + cross(A->angularVelocity, ra))
+     - (B ? (B->linearVelocity + cross(B->angularVelocity, rb)) : Vec3(0,0,0));
+
+  Vec3 t = rv - n * dot3(rv, n);
+  float t2 = len2(t);
+  if (finiteF(t2) && t2 > 1e-10f) {
+    t = t * (1.f / std::sqrt(t2));
+    if (!finite3(t)) return;
+
+    Vec3 raXt = cross(ra, t);
+    Vec3 termAt = mat3Mul(invIAw, raXt);
+    if (!finite3(termAt)) return;
+    float ktA = A->invMass + dot3(cross(termAt, ra), t);
+
+    float ktB = 0.f;
+    if (B) {
+      Vec3 rbXt = cross(rb, t);
+      Vec3 termBt = mat3Mul(invIBw, rbXt);
+      if (!finite3(termBt)) return;
+      ktB = invMassB + dot3(cross(termBt, rb), t);
+    }
+
+    float denomT = ktA + ktB;
+    if (!finiteF(denomT) || std::fabs(denomT) < 1e-8f) return;
+
+    float jt = -dot3(rv, t) / denomT;
+    if (!finiteF(jt)) return;
+
+    const float maxF = friction * std::fabs(j);
+    jt = std::max(-maxF, std::min(maxF, jt));
+
+    Vec3 impT = t * jt;
+    if (!finite3(impT)) return;
+
+    applyImpulse(*A, impT * -1.f, ra);
+    if (B) applyImpulse(*B, impT, rb);
+  }
+
+  A->asleep = false;
+  A->sleepTimer = 0.f;
+  if (B) { B->asleep=false; B->sleepTimer=0.f; }
 }
 
 void PhysicsWorldRB::solvePosition(const Contact& c) {
   RigidBoxBody* A = get(c.a);
-  if (!A || !A->isDynamic()) return;
+  if (!A) return;
+  RigidBoxBody* B = (c.b != 0) ? get(c.b) : nullptr;
 
-  const float slop = 0.001f;
+  const float slop = 0.002f;
   const float percent = 0.8f;
-  float pen = std::max(0.f, c.penetration - slop);
+
+  float pen = c.penetration;
+  if (!finiteF(pen)) return;
+  pen = std::max(0.f, pen - slop);
   if (pen <= 0.f) return;
 
-  A->position = A->position + c.normal * (pen * percent);
+  Vec3 n = c.normal;
+  if (!finite3(n)) return;
+  n = safeNormalizeOrZero(n);
+  if (len2(n) < 1e-12f) return;
+
+  float wA = A->invMass;
+  float wB = B ? B->invMass : 0.f;
+  float wSum = wA + wB;
+  if (!finiteF(wSum) || wSum <= 0.f) return;
+
+  Vec3 corr = n * (percent * pen / wSum);
+  if (!finite3(corr)) return;
+
+  if (A->isDynamic()) A->position = A->position - corr * wA;
+  if (B && B->isDynamic()) B->position = B->position + corr * wB;
 }
 
-// ------------------------------------------------------------
-// sleeping
-// ------------------------------------------------------------
 void PhysicsWorldRB::updateSleeping(RigidBoxBody& b, float h) {
   if (!b.isDynamic()) return;
 
-  if (len2(b.linearVelocity) < 1e-4f &&
-      len2(b.angularVelocity) < 1e-4f) {
+  const float v2 = len2(b.linearVelocity);
+  const float w2 = len2(b.angularVelocity);
+
+  if (!finiteF(v2) || !finiteF(w2)) {
+    b.asleep = false;
+    b.sleepTimer = 0.f;
+    return;
+  }
+
+  if (v2 < b.sleepVel*b.sleepVel && w2 < b.sleepAngVel*b.sleepAngVel) {
     b.sleepTimer += h;
-    if (b.sleepTimer > b.sleepTime) {
+    if (b.sleepTimer >= b.sleepTime) {
       b.asleep = true;
       b.linearVelocity = Vec3(0,0,0);
       b.angularVelocity = Vec3(0,0,0);
@@ -206,85 +483,104 @@ void PhysicsWorldRB::updateSleeping(RigidBoxBody& b, float h) {
   }
 }
 
-// ------------------------------------------------------------
-// player collision
-// ------------------------------------------------------------
-bool PhysicsWorldRB::collidePlayerSphere(Vec3& center, float radius, Vec3& vel, bool* groundedOut) {
+bool PhysicsWorldRB::collidePlayerSphere(Vec3& center, float radius, Vec3& playerVel, bool* outGrounded) {
+  bool hit = false;
   bool grounded = false;
 
   for (auto& b : m_bodies) {
     if (!b.isDynamic()) continue;
 
+    const Quat qn = quatNormalize(b.orientation);
+    const Mat3 R = quatToMat3(qn);
+    const Mat3 Rt = mat3Transpose(R);
+
     Vec3 d = center - b.position;
-    Vec3 cl = clampVec3(d,
-      Vec3(-b.halfExtents.x, -b.halfExtents.y, -b.halfExtents.z),
-      Vec3( b.halfExtents.x,  b.halfExtents.y,  b.halfExtents.z));
+    Vec3 local = mat3Mul(Rt, d);
 
-    Vec3 closest = b.position + cl;
+    Vec3 cl = clampVec3(local, Vec3(-b.halfExtents.x, -b.halfExtents.y, -b.halfExtents.z),
+                               Vec3( b.halfExtents.x,  b.halfExtents.y,  b.halfExtents.z));
+    Vec3 closest = mat3Mul(R, cl) + b.position;
     Vec3 delta = center - closest;
-    float d2 = len2(delta);
 
-    if (d2 < radius*radius && d2 > 1e-8f) {
+    float d2 = len2(delta);
+    if (d2 < radius*radius && d2 > 1e-10f) {
       float dist = std::sqrt(d2);
-      Vec3 n = delta * (1.f / dist);
+      Vec3 n = delta * (1.f/dist);
       float pen = radius - dist;
 
       center = center + n * pen;
 
-      float vn = dot3(vel, n);
-      if (vn < 0.f) vel = vel - n * vn;
+      float vn = dot3(playerVel, n);
+      if (vn < 0.f) playerVel = playerVel - n * vn;
 
-      // push box
-      Vec3 push = Vec3(vel.x, 0.f, vel.z);
-      if (len2(push) > 1e-6f) {
-        push = push * (1.f / std::sqrt(len2(push)));
-        b.linearVelocity = b.linearVelocity + push * (6.f * b.invMass);
-        b.asleep = false;
-      }
+      float push = 6.0f; // tune
+      b.linearVelocity = b.linearVelocity + (n * (-push * vn)) * b.invMass;
 
       if (n.y > 0.6f) grounded = true;
+      hit = true;
+      b.asleep = false;
+      b.sleepTimer = 0.f;
+    }
+  }
+
+  for (const auto& s : m_static) {
+    Vec3 cl = clampVec3(center, s.min, s.max);
+    Vec3 d = center - cl;
+    float d2 = len2(d);
+    if (d2 < radius*radius) {
+      float px = std::min(center.x - s.min.x, s.max.x - center.x);
+      float py = std::min(center.y - s.min.y, s.max.y - center.y);
+      float pz = std::min(center.z - s.min.z, s.max.z - center.z);
+
+      Vec3 n(0,1,0);
+      float pen = py;
+      if (px < pen) { pen=px; n = (center.x < (s.min.x+s.max.x)*0.5f) ? Vec3(-1,0,0) : Vec3(1,0,0); }
+      if (pz < pen) { pen=pz; n = (center.z < (s.min.z+s.max.z)*0.5f) ? Vec3(0,0,-1) : Vec3(0,0,1); }
+
+      center = center + n * pen;
+      float vn = dot3(playerVel, n);
+      if (vn < 0.f) playerVel = playerVel - n * vn;
+
+      if (n.y > 0.6f) grounded = true;
+      hit = true;
     }
   }
 
   if (enableGround) {
     float bottom = center.y - radius;
     if (bottom < groundY) {
-      center.y += groundY - bottom;
-      if (vel.y < 0.f) vel.y = 0.f;
+      center.y += (groundY - bottom);
+      if (playerVel.y < 0.f) playerVel.y = 0.f;
       grounded = true;
+      hit = true;
     }
   }
 
-  if (groundedOut) *groundedOut = grounded;
-  return grounded;
+  if (outGrounded) *outGrounded = grounded;
+  return hit;
 }
 
-// ------------------------------------------------------------
-// stepping
-// ------------------------------------------------------------
 void PhysicsWorldRB::substep(float h) {
-  for (auto& b : m_bodies)
-    integrate(b, h);
+  for (auto& b : m_bodies) integrate(b, h);
 
   std::vector<Contact> contacts;
   gatherContacts(contacts);
 
-  for (int i=0;i<velocityIters;i++)
-    for (const auto& c : contacts)
-      solveVelocity(c);
+  for (int it=0; it<velocityIters; ++it) {
+    for (const auto& c : contacts) solveVelocity(c);
+  }
 
-  for (int i=0;i<positionIters;i++)
-    for (const auto& c : contacts)
-      solvePosition(c);
+  for (int it=0; it<positionIters; ++it) {
+    for (const auto& c : contacts) solvePosition(c);
+  }
 
-  for (auto& b : m_bodies)
-    updateSleeping(b, h);
+  for (auto& b : m_bodies) updateSleeping(b, h);
 }
 
 void PhysicsWorldRB::step(float dt) {
   if (dt <= 0.f) return;
   m_accum += dt;
-  int steps = 0;
+  int steps=0;
   while (m_accum >= fixedDt && steps < maxSubsteps) {
     substep(fixedDt);
     m_accum -= fixedDt;
