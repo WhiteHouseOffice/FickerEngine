@@ -180,7 +180,9 @@ void Scene::init() {
   m_rb.velocityIters = 12;
   m_rb.positionIters = 4;
 
-  SpawnCrates(m_rb);
+  m_spawnCratesPending = true;
+  m_spawnTimer = 0.0f;
+
 }
 
 void Scene::setPlayerSphere(const Vec3& center, float radius, const Vec3& velocity) {
@@ -201,6 +203,16 @@ bool Scene::getPlayerSphere(Vec3& outCenter, Vec3& outVelocity, bool& outGrounde
 void Scene::update(float dt) {
   static int s_frames = 0;
   static float s_accum = 0.0f;
+  // Delayed crate spawn to avoid initial contact singularities
+  if (m_spawnCratesPending) {
+   m_spawnTimer += dt;
+    if (m_spawnTimer >= 1.0f) {
+     SpawnCrates(m_rb);
+      m_spawnCratesPending = false;
+     std::printf("[Scene] Crates spawned after delay\n");
+    }
+}
+
 
   // Gameplay update
   for (auto& obj : m_objects) {
@@ -256,7 +268,11 @@ if (bad) {
   // Just keep the game responsive.
   return;
 }
-
+// after stepping loop, before player collision
+static int s_print = 0;
+if ((s_print++ % 60) == 0) {
+  std::printf("[Scene] RB bodies=%zu\n", m_rb.bodies().size());
+}
 
   // Player collision
   m_playerCenterOut = m_playerCenter;

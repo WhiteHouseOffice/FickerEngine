@@ -25,7 +25,9 @@ public:
   bool getPlayerSphere(Vec3& outCenter, Vec3& outVelocity, bool& outGrounded) const;
 
 private:
-float m_accumDt = 0.0f;
+  float m_accumDt = 0.0f;
+  bool  m_spawnCratesPending = false;
+  float m_spawnTimer = 0.0f;
 
   std::vector<std::unique_ptr<GameObject>> m_objects;
 
