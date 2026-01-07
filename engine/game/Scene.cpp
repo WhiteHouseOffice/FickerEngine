@@ -61,7 +61,6 @@ static void DrawAABB(const Vec3& mn, const Vec3& mx) {
 
 static void DrawOBB(const fe::RigidBoxBody& b) {
 #ifdef FE_NATIVE
-  // If physics explodes into NaNs, don’t draw garbage (also helps confirm NaN cases)
   if (!fe_isfinite3(b.position) || !fe_isfinite3(b.halfExtents)) return;
 
   using fe::Quat;
@@ -142,11 +141,12 @@ void Scene::rebuildStaticAABBs() {
 
 template <typename RB>
 static void SpawnCrates(RB& rb) {
-  rb.createBox(Vec3(0.0f, 1.30f, 0.0f), Vec3(0.50f, 0.50f, 0.50f), 2.0f);
-  rb.createBox(Vec3(0.0f, 2.35f, 0.0f), Vec3(0.50f, 0.50f, 0.50f), 2.0f);
-  rb.createBox(Vec3(3.75f, 2.10f, 0.0f), Vec3(0.50f, 0.50f, 0.50f), 2.0f);
+  // Lift them slightly so they don't start in an exact "touching contact" state.
+  // This avoids solver singularities on frame 1.
+  rb.createBox(Vec3(0.0f, 1.36f, 0.0f), Vec3(0.50f, 0.50f, 0.50f), 2.0f);
+  rb.createBox(Vec3(0.0f, 2.42f, 0.0f), Vec3(0.50f, 0.50f, 0.50f), 2.0f);
+  rb.createBox(Vec3(3.75f, 2.16f, 0.0f), Vec3(0.50f, 0.50f, 0.50f), 2.0f);
 }
-
 
 void Scene::init() {
   // ---- Static world platforms ----
@@ -179,7 +179,6 @@ void Scene::init() {
   m_rb.velocityIters = 12;
   m_rb.positionIters = 4;
 
-  // Spawn crates
   SpawnCrates(m_rb);
 }
 
@@ -200,8 +199,9 @@ bool Scene::getPlayerSphere(Vec3& outCenter, Vec3& outVelocity, bool& outGrounde
 
 void Scene::update(float dt) {
   static int s_frames = 0;
-  static int s_lastBodyCount = -1;
+  static float s_accum = 0.0f;
 
+  // Gameplay update
   for (auto& obj : m_objects) {
     if (obj) obj->update(dt);
   }
@@ -212,50 +212,44 @@ void Scene::update(float dt) {
 
   const float fixed = m_rb.fixedDt;
   const float maxDt = fixed * (float)m_rb.maxSubsteps;
-  const float inDt  = dt;
+
+  // Clamp input dt to avoid huge catch-up after pauses
+  const float inDt = dt;
   if (dt > maxDt) dt = maxDt;
 
   if (s_frames < 60) {
     std::printf("[Scene] dt in=%f clamped=%f fixed=%f maxDt=%f\n", inDt, dt, fixed, maxDt);
   }
 
-  float remaining = dt;
-int steps = 0;
-while (remaining > 0.0f && steps < m_rb.maxSubsteps) {
-  const float stepDt = (remaining > m_rb.fixedDt) ? m_rb.fixedDt : remaining;
-  m_rb.step(stepDt);
-  remaining -= stepDt;
-  steps++;
-}
+  // --- Proper fixed-step accumulator: only ever step with fixedDt ---
+  s_accum += dt;
+  if (s_accum > maxDt) s_accum = maxDt;
 
+  int steps = 0;
+  while (s_accum >= fixed && steps < m_rb.maxSubsteps) {
+    m_rb.step(fixed);
+    s_accum -= fixed;
+    steps++;
+  }
 
-  // ---- BOX FAILSAFE + DIAGNOSTICS ----
+  // --- Quick NaN detection: if any body goes non-finite, respawn crates ---
   const auto& bodies = m_rb.bodies();
-  const int bodyCount = (int)bodies.size();
-
-  if (s_lastBodyCount != bodyCount) {
-    std::printf("[Scene] bodies=%d\n", bodyCount);
-    // Also flag NaNs immediately if present
-    for (int i = 0; i < bodyCount && i < 3; ++i) {
-      const auto& b = bodies[i];
-      if (!fe_isfinite3(b.position)) {
-        std::printf("[Scene] body[%d] position is NaN/Inf!\n", i);
-      }
+  bool bad = false;
+  for (int i = 0; i < (int)bodies.size() && i < 3; ++i) {
+    if (!fe_isfinite3(bodies[i].position)) {
+      bad = true;
+      break;
     }
-    s_lastBodyCount = bodyCount;
   }
 
-  // Guarantee boxes exist: if bodies drop below 3, respawn them.
-  // (This makes "boxes happen" even if physics deletes them.)
-  if (bodyCount < 3) {
-    std::printf("[Scene] respawn crates (bodyCount=%d)\n", bodyCount);
+  if (bad) {
+    std::printf("[Scene] NaN detected -> respawn crates\n");
+    // We can’t reliably “reset world” without knowing your API,
+    // but respawning above contact at least keeps the scene usable.
     SpawnCrates(m_rb);
-    s_lastBodyCount = (int)m_rb.bodies().size();
   }
 
-  s_frames++;
-
-  // Player collision output
+  // Player collision
   m_playerCenterOut = m_playerCenter;
   m_playerVelOut = m_playerVel;
   m_playerGroundedOut = false;
@@ -263,16 +257,8 @@ while (remaining > 0.0f && steps < m_rb.maxSubsteps) {
   if (m_playerValid) {
     (void)m_rb.collidePlayerSphere(m_playerCenterOut, m_playerRadius, m_playerVelOut, &m_playerGroundedOut);
   }
-  static int s_posFrames = 0;
-if (s_posFrames++ < 120) { // ~2 seconds at 60fps
-  const auto& bodies = m_rb.bodies();
-  const int n = (int)bodies.size();
-  for (int i = 0; i < n && i < 3; ++i) {
-    const auto& b = bodies[i];
-    std::printf("[Scene] b%d pos=(%f,%f,%f)\n", i, b.position.x, b.position.y, b.position.z);
-  }
-}
 
+  s_frames++;
 }
 
 void Scene::render(const Mat4& view, const Mat4& proj) {
