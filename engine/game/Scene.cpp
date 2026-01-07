@@ -1,9 +1,14 @@
 #include "game/Scene.h"
 #include "game/GameObject.h"
 
+// NEW
+#include "geom/ColoredQuad.h"
+#include "render/RenderMesh.h"
+
 #include <cstdio>
 #include <cmath>
 #include <memory>
+#include <vector> // NEW
 
 #ifdef FE_NATIVE
   #include <GL/gl.h>
@@ -155,6 +160,58 @@ static void DrawOBB(const fe::RigidBoxBody& b) {
   glEnd();
 #else
   (void)b;
+#endif
+}
+
+// ------------------------------------------------------------
+// NEW: Colored surface quad using RenderMesh + ColoredQuad
+// ------------------------------------------------------------
+static void DrawColoredSurfaceQuad() {
+#ifdef FE_NATIVE
+  // Make sure fixed-function state doesn't override vertex colors.
+  glDisable(GL_LIGHTING);
+  glDisable(GL_TEXTURE_2D);
+
+  // Create a colored quad slightly above y=0 to avoid z-fighting with grid lines.
+  auto q = ColoredQuad::make(
+    Vec3(0.0f, 0.01f, 0.0f),
+    2.5f, 2.5f,
+    ColoredQuad::RGBA(255,   0,   0, 255), // red
+    ColoredQuad::RGBA(0,   255,   0, 255), // green
+    ColoredQuad::RGBA(0,     0, 255, 255), // blue
+    ColoredQuad::RGBA(255, 255,   0, 255), // yellow
+    true // CCW
+  );
+
+  auto unpack = [](uint32_t rgba, float& r, float& g, float& b, float& a) {
+    r = float((rgba >> 24) & 0xFF) / 255.0f;
+    g = float((rgba >> 16) & 0xFF) / 255.0f;
+    b = float((rgba >>  8) & 0xFF) / 255.0f;
+    a = float((rgba >>  0) & 0xFF) / 255.0f;
+  };
+
+  std::vector<engine::render::VertexPC> verts;
+  verts.reserve(q.vertices.size());
+
+  for (const auto& v : q.vertices) {
+    float r, g, b, a;
+    unpack(v.rgba, r, g, b, a);
+    verts.push_back(engine::render::VertexPC{ v.pos.x, v.pos.y, v.pos.z, r, g, b, a });
+  }
+
+  std::vector<uint16_t> inds;
+  inds.reserve(q.indices.size());
+  for (uint32_t idx : q.indices) inds.push_back((uint16_t)idx);
+
+  engine::render::RenderMesh mesh;
+  mesh.SetPrimitive(engine::render::RenderMesh::Primitive::Triangles);
+  mesh.SetBackfaceCulling(true);
+  mesh.SetFrontFaceWinding(engine::render::RenderMesh::Winding::CCW);
+  mesh.SetVertices(verts);
+  mesh.SetIndices(inds);
+  mesh.Draw();
+#else
+  // no-op on web path for now
 #endif
 }
 
@@ -363,6 +420,9 @@ void Scene::renderDebug(const Mat4& view, const Mat4& proj) {
   for (const auto& b : m_rb.bodies()) {
     DrawOBB(b);
   }
+
+  // NEW: draw a colored surface quad (triangles + colors + culling)
+  DrawColoredSurfaceQuad();
 
   glColor3f(1.f, 1.f, 1.f);
 #else
