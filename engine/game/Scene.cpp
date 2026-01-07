@@ -211,8 +211,10 @@ void Scene::update(float dt) {
 }
 
 void Scene::render(const Mat4& view, const Mat4& proj) {
-  // For now, we render via the debug path so we always see something.
-  // Later we can move real mesh rendering back here.
+ // Intentionally empty.
+  // Real rendering (RenderMesh, terrain, props) goes here.
+  // Debug visualization lives in renderDebug().
+  renderDebug(view, proj);
 }
 
 
