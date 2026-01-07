@@ -364,6 +364,66 @@ void PhysicsWorldRB::contactsBoxGround(const RigidBoxBody& A, std::vector<Contac
 }
 
 void PhysicsWorldRB::contactsBoxStaticAABB(const RigidBoxBody& A, const AABB& S, std::vector<Contact>& out) {
+  // Special-case: stable support contact against the TOP face of the static AABB.
+  // This fixes "one edge over an edge => cube starts falling" by emitting a manifold
+  // of bottom-vertex contacts near the top surface, not only when a vertex is inside.
+  const float topY = S.max.y;
+
+  // Collect bottom vertices of OBB
+  Vec3 ax, ay, az; computeOBBAxes(A, ax, ay, az);
+
+  Vec3 verts[8];
+  int idx = 0;
+  const int sgn[2] = {-1, 1};
+  float minY = 1e30f;
+  for (int ix : sgn) for (int iy : sgn) for (int iz : sgn) {
+    Vec3 v = A.position
+      + ax * (A.halfExtents.x * (float)ix)
+      + ay * (A.halfExtents.y * (float)iy)
+      + az * (A.halfExtents.z * (float)iz);
+    verts[idx++] = v;
+    if (v.y < minY) minY = v.y;
+  }
+
+  // If the box is nowhere near the top surface, do nothing here.
+  // (Other faces handled by fallback below.)
+  const float near = 0.08f;     // contact "skin" for stability
+  if (minY > topY + near) {
+    // box is clearly above
+  } else {
+    // Emit up to 4 bottom contacts that are within the AABB footprint and near the top plane.
+    const float epsY = 0.02f;
+    int emitted = 0;
+
+    for (int i=0; i<8 && emitted < 4; ++i) {
+      const Vec3& v = verts[i];
+
+      // only bottom-ish verts
+      if (v.y > minY + epsY) continue;
+
+      // within footprint (with small tolerance)
+      const float tol = 0.02f;
+      if (v.x < S.min.x - tol || v.x > S.max.x + tol) continue;
+      if (v.z < S.min.z - tol || v.z > S.max.z + tol) continue;
+
+      // if vertex is at/under the top plane (or very close), create a support contact
+      if (v.y <= topY + near) {
+        Contact c;
+        c.a = A.id;
+        c.b = 0;
+        c.point = Vec3(v.x, topY, v.z);      // snap point onto plane
+        c.normal = Vec3(0, 1, 0);
+        c.penetration = std::max(0.0f, topY - v.y);
+        out.push_back(c);
+        emitted++;
+      }
+    }
+
+    // If we emitted support contacts, we’re done (stable top contact manifold).
+    if (emitted > 0) return;
+  }
+
+  // Fallback: vertex-inside AABB push-out (sides/bottom collisions etc.)
   const int s[2]={-1,1};
   for (int ix: s) for (int iy: s) for (int iz: s) {
     Vec3 v = obbVertex(A, ix,iy,iz);
@@ -385,20 +445,10 @@ void PhysicsWorldRB::contactsBoxStaticAABB(const RigidBoxBody& A, const AABB& S,
       else               { pen = dyMax; n = Vec3(0, 1,0); }
 
       float px = (dxMin < dxMax) ? dxMin : dxMax;
-      if (px < pen) {
-        pen = px;
-        n = (dxMin < dxMax) ? Vec3(-1,0,0) : Vec3(1,0,0);
-      }
+      if (px < pen) { pen = px; n = (dxMin < dxMax) ? Vec3(-1,0,0) : Vec3(1,0,0); }
 
       float pz = (dzMin < dzMax) ? dzMin : dzMax;
-      if (pz < pen) {
-        pen = pz;
-        n = (dzMin < dzMax) ? Vec3(0,0,-1) : Vec3(0,0,1);
-      }
-
-      if (n.y > 0.5f && v.y > S.max.y - 0.05f) {
-        pen = std::max(0.0f, pen - 0.005f);
-      }
+      if (pz < pen) { pen = pz; n = (dzMin < dzMax) ? Vec3(0,0,-1) : Vec3(0,0,1); }
 
       Contact c;
       c.a = A.id; c.b = 0;
@@ -406,10 +456,11 @@ void PhysicsWorldRB::contactsBoxStaticAABB(const RigidBoxBody& A, const AABB& S,
       c.normal = n;
       c.penetration = pen;
       out.push_back(c);
-      if (out.size() >= 4) break;
+      if (out.size() >= 4) return;
     }
   }
 }
+
 
 void PhysicsWorldRB::gatherContacts(std::vector<Contact>& out) {
   out.clear();
@@ -615,8 +666,12 @@ bool PhysicsWorldRB::collidePlayerSphere(Vec3& center, float radius, Vec3& playe
         nh = nh * (1.0f / std::sqrt(nh2));
         float vnh = dot3(playerVel, nh);
         if (vnh < 0.f) {
-          float push = 6.0f;
-          b.linearVelocity = b.linearVelocity + (nh * (-push * vnh)) * b.invMass;
+          float push = 2.0f; // was 6.0f
+        Vec3 dv = nh * (-push * vnh);
+          const float maxDv = 4.0f;
+          float dv2 = len2(dv);
+          if (dv2 > maxDv*maxDv) dv = dv * (maxDv / std::sqrt(dv2));
+          b.linearVelocity = b.linearVelocity + dv;
         }
       }
 

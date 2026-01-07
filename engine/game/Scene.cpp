@@ -225,7 +225,7 @@ void Scene::init() {
   m_rb.fixedDt = 1.0f / 120.0f;
   m_rb.maxSubsteps = 8;
   m_rb.velocityIters = 12;
-  m_rb.positionIters = 4;
+  m_rb.positionIters = 6;
 
   // Crates spawn immediately (per your request)
   SpawnCrates(m_rb);
