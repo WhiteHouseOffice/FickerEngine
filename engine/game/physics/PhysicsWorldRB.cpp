@@ -223,34 +223,143 @@ void PhysicsWorldRB::solveVelocity(const Contact& c) {
   RigidBoxBody* A = get(c.a);
   if (!A) return;
 
+  const bool hasB = (c.b != 0);
+  RigidBoxBody* B = hasB ? get(c.b) : nullptr;
+
   Vec3 n = c.normal;
-  if (!safeNormalize(n)) return;
+  float n2 = dot3(n, n);
+  if (!finite1(n2) || n2 < 1e-12f) return;
+  n = n * (1.0f / std::sqrt(n2));
 
   Vec3 ra = c.point - A->position;
   Vec3 va = A->linearVelocity + cross(A->angularVelocity, ra);
-  float vn = dot3(va, n);
-  if (vn > 0.f) return;
 
-  float denom = A->invMass;
-  if (denom <= 0.f) return;
+  Vec3 vb{0,0,0};
+  Vec3 rb{0,0,0};
+  float invMassB = 0.f;
+  Mat3 invIBw{};
 
-  float j = -(1.f + restitution) * vn / denom;
-  j = std::min(j, 200.f);
+  if (B) {
+    rb = c.point - B->position;
+    vb = B->linearVelocity + cross(B->angularVelocity, rb);
+    invMassB = B->invMass;
+    invIBw = invInertiaWorld(*B);
+  }
 
-  applyImpulse(*A, n * j, ra);
+  Vec3 rv = va - vb;
+  float vn = dot3(rv, n);
+  if (vn > 0.f) return; // separating => no impulse
+
+  // Effective mass along normal
+  Mat3 invIAw = invInertiaWorld(*A);
+
+  Vec3 raXn = cross(ra, n);
+  Vec3 termA = mat3Mul(invIAw, raXn);
+  float kA = A->invMass + dot3(cross(termA, ra), n);
+
+  float kB = 0.f;
+  if (B) {
+    Vec3 rbXn = cross(rb, n);
+    Vec3 termB = mat3Mul(invIBw, rbXn);
+    kB = invMassB + dot3(cross(termB, rb), n);
+  }
+
+  float denom = kA + kB;
+  if (!finite1(denom) || denom <= 1e-8f) return;
+
+  // Resting stabilization: no bounce at low speeds
+  const float e = (std::fabs(vn) < 1.0f) ? 0.0f : restitution;
+
+  float j = -(1.f + e) * vn / denom;
+  if (!finite1(j)) return;
+
+  // Clamp: prevents huge impulses that cause "space launch"
+  const float maxJ = 80.0f;
+  if (j > maxJ) j = maxJ;
+
+  Vec3 impulse = n * j;
+
+  // IMPORTANT SIGN: normal points from B->A (or surface->A),
+  // so A gets +impulse, B gets -impulse.
+  applyImpulse(*A, impulse, ra);
+  if (B) applyImpulse(*B, impulse * -1.f, rb);
+
+  // Friction
+  rv = (A->linearVelocity + cross(A->angularVelocity, ra))
+     - (B ? (B->linearVelocity + cross(B->angularVelocity, rb)) : Vec3(0,0,0));
+
+  Vec3 t = rv - n * dot3(rv, n);
+  float t2 = len2(t);
+  if (t2 > 1e-10f) {
+    t = t * (1.f / std::sqrt(t2));
+
+    Vec3 raXt = cross(ra, t);
+    Vec3 termAt = mat3Mul(invIAw, raXt);
+    float ktA = A->invMass + dot3(cross(termAt, ra), t);
+
+    float ktB = 0.f;
+    if (B) {
+      Vec3 rbXt = cross(rb, t);
+      Vec3 termBt = mat3Mul(invIBw, rbXt);
+      ktB = invMassB + dot3(cross(termBt, rb), t);
+    }
+
+    float denomT = ktA + ktB;
+    if (denomT > 1e-8f) {
+      float jt = -dot3(rv, t) / denomT;
+
+      // Use friction floor to prevent micro-creep
+      float maxF = friction * std::max(j, 0.5f);
+      if (jt >  maxF) jt =  maxF;
+      if (jt < -maxF) jt = -maxF;
+
+      Vec3 impT = t * jt;
+      applyImpulse(*A, impT, ra);
+      if (B) applyImpulse(*B, impT * -1.f, rb);
+    }
+  }
+
+  // Wake on contact
+  A->asleep = false;
+  A->sleepTimer = 0.f;
+  if (B) { B->asleep = false; B->sleepTimer = 0.f; }
 }
+
 
 void PhysicsWorldRB::solvePosition(const Contact& c) {
   RigidBoxBody* A = get(c.a);
   if (!A) return;
+  RigidBoxBody* B = (c.b != 0) ? get(c.b) : nullptr;
 
-  float pen = std::max(0.f, c.penetration - 0.01f);
+  // Gentle correction (prevents jitter + launch pumping)
+  const float slop = 0.01f;
+  const float percent = 0.2f;
+
+  float pen = c.penetration - slop;
   if (pen <= 0.f) return;
 
   Vec3 n = c.normal;
-  if (!safeNormalize(n)) return;
+  float n2 = dot3(n, n);
+  if (!finite1(n2) || n2 < 1e-12f) return;
+  n = n * (1.0f / std::sqrt(n2));
 
-  A->position = A->position + n * (pen * 0.2f);
+  float wA = A->invMass;
+  float wB = B ? B->invMass : 0.f;
+  float wSum = wA + wB;
+  if (wSum <= 0.f) return;
+
+  Vec3 corr = n * (percent * pen / wSum);
+
+  // Clamp correction magnitude (prevents teleport -> velocity pump)
+  const float maxCorr = 0.15f;
+  float c2 = len2(corr);
+  if (c2 > maxCorr * maxCorr) {
+    corr = corr * (maxCorr / std::sqrt(c2));
+  }
+
+  // IMPORTANT SIGN: normal points from B->A, so A moves +n, B moves -n
+  if (A->isDynamic()) A->position = A->position + corr * wA;
+  if (B && B->isDynamic()) B->position = B->position - corr * wB;
 }
 
 // ============================================================
