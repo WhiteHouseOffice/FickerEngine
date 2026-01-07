@@ -178,13 +178,108 @@ void PhysicsWorldRB::integrateOrientation(RigidBoxBody& b, float h) {
   b.orientation = safeQuatNormalize(q);
 }
 
-void PhysicsWorldRB::integrate(RigidBoxBody& b, float h) {
+// ------------------------------------------------------------
+// CCD: swept bounding-sphere vs expanded AABB + ground plane
+// ------------------------------------------------------------
+bool PhysicsWorldRB::sweepSphereVsGround(const Vec3& p0, const Vec3& p1, float r, float& outT) const {
+  if (!enableGround) return false;
+  const float y0 = p0.y - r;
+  const float y1 = p1.y - r;
+  if (y0 >= groundY && y1 >= groundY) return false;
+  const float dy = (p1.y - p0.y);
+  if (std::fabs(dy) < 1e-8f) {
+    // already penetrating or resting
+    outT = 0.f;
+    return true;
+  }
+  const float t = (groundY + r - p0.y) / dy;
+  if (t < 0.f || t > 1.f) return false;
+  outT = clampf(t, 0.f, 1.f);
+  return true;
+}
+
+bool PhysicsWorldRB::sweepSphereVsAABB(const Vec3& p0, const Vec3& p1, float r, const AABB& box, float& outT, Vec3& outN) const {
+  // Ray vs expanded AABB (slab method). Returns earliest hit t and face normal.
+  const Vec3 d = p1 - p0;
+  const Vec3 mn(box.min.x - r, box.min.y - r, box.min.z - r);
+  const Vec3 mx(box.max.x + r, box.max.y + r, box.max.z + r);
+
+  float tmin = 0.f;
+  float tmax = 1.f;
+  Vec3 nEnter(0,0,0);
+
+  auto slab = [&](float p, float dp, float minv, float maxv, const Vec3& nNeg, const Vec3& nPos) -> bool {
+    if (std::fabs(dp) < 1e-8f) {
+      return (p >= minv && p <= maxv);
+    }
+    const float inv = 1.f / dp;
+    float t1 = (minv - p) * inv;
+    float t2 = (maxv - p) * inv;
+    Vec3 n1 = nNeg;
+    Vec3 n2 = nPos;
+    if (t1 > t2) { std::swap(t1, t2); std::swap(n1, n2); }
+    if (t1 > tmin) { tmin = t1; nEnter = n1; }
+    if (t2 < tmax) { tmax = t2; }
+    return tmin <= tmax;
+  };
+
+  if (!slab(p0.x, d.x, mn.x, mx.x, Vec3(-1,0,0), Vec3(1,0,0))) return false;
+  if (!slab(p0.y, d.y, mn.y, mx.y, Vec3(0,-1,0), Vec3(0,1,0))) return false;
+  if (!slab(p0.z, d.z, mn.z, mx.z, Vec3(0,0,-1), Vec3(0,0,1))) return false;
+
+  if (tmin < 0.f || tmin > 1.f) return false;
+  outT = clampf(tmin, 0.f, 1.f);
+  outN = nEnter;
+  return true;
+}
+
+void PhysicsWorldRB::integrate(RigidBoxBody& b, float h, const Vec3& oldPos) {
   if (!b.isDynamic() || b.asleep) return;
 
   if (b.useGravity)
     b.linearVelocity = b.linearVelocity + gravity * h;
 
-  b.position = b.position + b.linearVelocity * h;
+  // Predict position
+  Vec3 p0 = oldPos;
+  Vec3 p1 = oldPos + b.linearVelocity * h;
+
+  // Sweep a conservative bounding sphere to find earliest TOI against world.
+  if (enableCCD) {
+    const float r = std::sqrt(len2(b.halfExtents)) * ccdRadiusScale;
+    float bestT = 1.f;
+    Vec3  bestN(0,0,0);
+    bool  hit = false;
+
+    // Ground
+    float tg = 1.f;
+    if (sweepSphereVsGround(p0, p1, r, tg)) {
+      if (tg < bestT) { bestT = tg; bestN = Vec3(0,1,0); hit = true; }
+    }
+
+    // Static AABBs
+    for (const auto& s : m_static) {
+      float t = 1.f; Vec3 n(0,0,0);
+      if (sweepSphereVsAABB(p0, p1, r, s, t, n)) {
+        if (t < bestT) { bestT = t; bestN = n; hit = true; }
+      }
+    }
+
+    if (hit) {
+      // Move to TOI
+      b.position = p0 + (p1 - p0) * bestT;
+      // Nudge slightly out of the surface to avoid re-hits due to precision
+      b.position = b.position + bestN * ccdSlop;
+
+      // Remove velocity into normal (inelastic for TOI; restitution handled by solver)
+      const float vn = dot3(b.linearVelocity, bestN);
+      if (vn < 0.f) b.linearVelocity = b.linearVelocity - bestN * vn;
+    } else {
+      b.position = p1;
+    }
+  } else {
+    b.position = p1;
+  }
+
   integrateOrientation(b, h);
 }
 
@@ -321,17 +416,20 @@ void PhysicsWorldRB::contactsBoxGround(const RigidBoxBody& A, std::vector<Contac
     minY = std::min(minY, v.y);
   }
 
-  if (minY >= groundY) return;
+  // Speculative contact: if we're within skin OR will be within skin next substep.
+  const float vy = A.linearVelocity.y;
+  const float predictedMinY = minY + std::min(0.0f, vy) * m_contactDt;
+  if (minY >= groundY && predictedMinY > groundY + kSupportSkin) return;
 
   int emitted = 0;
   for (int i=0;i<8 && emitted<4;i++) {
-    if (verts[i].y <= minY + 0.01f) {
+    if (verts[i].y <= minY + 0.01f && verts[i].y <= groundY + kSupportSkin) {
       Contact c;
       c.a = A.id;
       c.b = 0;
       c.point = verts[i];
       c.normal = Vec3(0,1,0);
-      c.penetration = groundY - verts[i].y;
+      c.penetration = std::max(0.0f, groundY - verts[i].y);
       out.push_back(c);
       emitted++;
     }
@@ -358,7 +456,10 @@ void PhysicsWorldRB::contactsBoxStaticAABB(const RigidBoxBody& A, const AABB& S,
     minY = std::min(minY, v.y);
   }
 
-  if (minY > topY + kSupportSkin) return;
+  // Speculative support contact for fast downward motion (reduces "pop up" from
+  // deep penetration corrections when landing on platforms).
+  const float predictedMinY = minY + std::min(0.0f, A.linearVelocity.y) * m_contactDt;
+  if (minY > topY + kSupportSkin && predictedMinY > topY + kSupportSkin) return;
 
   // prevent support if body is moving upward quickly (reduces “pop”)
   if (A.linearVelocity.y > 0.5f) return;
@@ -410,12 +511,39 @@ void PhysicsWorldRB::gatherContacts(std::vector<Contact>& out) {
       contactsBoxBox(A, B, out);
     }
   }
+
+  // --- Warm-start match (previous substep -> this substep) ---
+  // Simple matching by pair + nearby point. Good enough for boxes and keeps
+  // the solver stable without a full manifold cache.
+  if (!m_prevContacts.empty()) {
+    const float maxDist2 = 0.08f * 0.08f;
+    for (auto& c : out) {
+      float bestD2 = maxDist2;
+      const Contact* best = nullptr;
+      for (const auto& p : m_prevContacts) {
+        if (p.a != c.a || p.b != c.b) continue;
+        if (dot3(p.normal, c.normal) < 0.9f) continue;
+        Vec3 d = c.point - p.point;
+        float d2 = len2(d);
+        if (d2 < bestD2) { bestD2 = d2; best = &p; }
+      }
+      if (best) {
+        c.accumNormalImpulse = best->accumNormalImpulse;
+        c.accumTangentImpulse = best->accumTangentImpulse;
+      } else {
+        c.accumNormalImpulse = 0.f;
+        c.accumTangentImpulse = 0.f;
+      }
+    }
+  } else {
+    for (auto& c : out) { c.accumNormalImpulse = 0.f; c.accumTangentImpulse = 0.f; }
+  }
 }
 
 // ============================================================
 // Solver
 // ============================================================
-void PhysicsWorldRB::solveVelocity(const Contact& c) {
+void PhysicsWorldRB::solveVelocity(Contact& c) {
   RigidBoxBody* A = get(c.a);
   if (!A) return;
 
@@ -462,16 +590,24 @@ void PhysicsWorldRB::solveVelocity(const Contact& c) {
   float denom = kA + kB;
   if (!finite1(denom) || denom <= 1e-8f) return;
 
+  // --- Normal impulse (sequential impulse with warm-start) ---
   const float e = (std::fabs(vn) < 1.0f) ? 0.0f : restitution;
+  float lambdaN = -(1.f + e) * vn / denom;
+  if (!finite1(lambdaN)) return;
 
-  float j = -(1.f + e) * vn / denom;
-  if (!finite1(j)) return;
+  // clamp accumulated (no pulling)
+  float oldN = c.accumNormalImpulse;
+  float newN = oldN + lambdaN;
+  if (newN < 0.f) newN = 0.f;
 
-  const float maxJ = 80.0f;
-  if (j > maxJ) j = maxJ;
+  // cap to avoid explosions
+  const float maxN = 80.0f;
+  if (newN > maxN) newN = maxN;
 
-  Vec3 impulse = n * j;
+  lambdaN = newN - oldN;
+  c.accumNormalImpulse = newN;
 
+  Vec3 impulse = n * lambdaN;
   applyImpulse(*A, impulse, ra);
   if (B) applyImpulse(*B, impulse * -1.f, rb);
 
@@ -497,13 +633,21 @@ void PhysicsWorldRB::solveVelocity(const Contact& c) {
 
     float denomT = ktA + ktB;
     if (denomT > 1e-8f) {
-      float jt = -dot3(rv, t) / denomT;
+      float lambdaT = -dot3(rv, t) / denomT;
+      if (!finite1(lambdaT)) return;
 
-      float maxF = friction * std::max(j, 0.5f);
-      if (jt >  maxF) jt =  maxF;
-      if (jt < -maxF) jt = -maxF;
+      float oldT = c.accumTangentImpulse;
+      float newT = oldT + lambdaT;
 
-      Vec3 impT = t * jt;
+      // Coulomb friction cone based on accumulated normal impulse
+      const float maxF = friction * std::max(c.accumNormalImpulse, 0.5f);
+      if (newT >  maxF) newT =  maxF;
+      if (newT < -maxF) newT = -maxF;
+
+      lambdaT = newT - oldT;
+      c.accumTangentImpulse = newT;
+
+      Vec3 impT = t * lambdaT;
       applyImpulse(*A, impT, ra);
       if (B) applyImpulse(*B, impT * -1.f, rb);
     }
@@ -590,6 +734,25 @@ static void stabilizeSupportedBodies(std::vector<RigidBoxBody>& bodies,
       std::vector<V2> hull;
       convexHullXZ(supportPts[i], hull);
       if (pointInConvexXZ(hull, com)) supported[i] = 1;
+    }
+
+    // If we have only 1-2 support points (common for slightly-overhanging
+    // box-on-box contacts with vertex sampling), accept support if the COM lies
+    // within a small expanded AABB of the support points. This prevents the
+    // top box from immediately "peeling off" even when its COM is still above
+    // the base.
+    if (!supported[i] && !supportPts[i].empty()) {
+      float minx = supportPts[i][0].x, maxx = supportPts[i][0].x;
+      float minz = supportPts[i][0].z, maxz = supportPts[i][0].z;
+      for (const auto& p : supportPts[i]) {
+        if (p.x < minx) minx = p.x; if (p.x > maxx) maxx = p.x;
+        if (p.z < minz) minz = p.z; if (p.z > maxz) maxz = p.z;
+      }
+      const float margin = 0.35f;
+      if (com.x >= minx - margin && com.x <= maxx + margin &&
+          com.z >= minz - margin && com.z <= maxz + margin) {
+        supported[i] = 1;
+      }
     }
 
     // If no hull support, also accept support if COM is within any static top footprint
@@ -714,19 +877,30 @@ bool PhysicsWorldRB::collidePlayerSphere(Vec3& center, float radius, Vec3& playe
 // Stepping
 // ============================================================
 void PhysicsWorldRB::substep(float h) {
-  for (auto& b : m_bodies) integrate(b, h);
+  m_contactDt = h;
+  // Capture previous positions for CCD sweeps.
+  std::vector<Vec3> oldPos;
+  oldPos.reserve(m_bodies.size());
+  for (const auto& b : m_bodies) oldPos.push_back(b.position);
+
+  for (size_t i=0; i<m_bodies.size(); ++i) {
+    integrate(m_bodies[i], h, oldPos[i]);
+  }
 
   std::vector<Contact> contacts;
   gatherContacts(contacts);
 
   for (int it=0; it<velocityIters; ++it)
-    for (const auto& c : contacts) solveVelocity(c);
+    for (auto& c : contacts) solveVelocity(c);
 
   for (int it=0; it<positionIters; ++it)
     for (const auto& c : contacts) solvePosition(c);
 
   // *** Upgrade pass ***
   stabilizeSupportedBodies(m_bodies, contacts, m_static);
+
+  // Store warm-start cache for next substep
+  m_prevContacts = contacts;
 }
 
 void PhysicsWorldRB::step(float dt) {
