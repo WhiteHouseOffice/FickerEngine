@@ -1,6 +1,8 @@
 #include "game/Scene.h"
 #include "game/GameObject.h"
+
 #include <cstdio>
+#include <cmath>
 
 #ifdef FE_NATIVE
   #include <GL/gl.h>
@@ -135,21 +137,20 @@ void Scene::init() {
   // ---- Static world platforms (must match Game::init platform AABBs) ----
   {
     auto* p = createObject();
-    p->position = Vec3(0.0f, 0.65f, 0.0f);        // (-2..2, 0.5..0.8, -2..2)
-    p->enableBoxCollider(Vec3(2.0f, 0.15f, 2.0f)); // half extents
+    p->position = Vec3(0.0f, 0.65f, 0.0f);
+    p->enableBoxCollider(Vec3(2.0f, 0.15f, 2.0f));
   }
   {
     auto* p = createObject();
-    p->position = Vec3(3.75f, 1.35f, 0.0f);        // (3..4.5, 1.2..1.5, -1..1)
+    p->position = Vec3(3.75f, 1.35f, 0.0f);
     p->enableBoxCollider(Vec3(0.75f, 0.15f, 1.0f));
   }
   {
     auto* p = createObject();
-    p->position = Vec3(-3.25f, 0.4f, 4.0f);        // (-4..-2.5, 0.2..0.6, 3..5)
+    p->position = Vec3(-3.25f, 0.4f, 4.0f);
     p->enableBoxCollider(Vec3(0.75f, 0.2f, 1.0f));
   }
 
-  // Build static collider list for rigid-body world
   rebuildStaticAABBs();
 
   // ---- Rigid-body world tuning ----
@@ -185,18 +186,15 @@ bool Scene::getPlayerSphere(Vec3& outCenter, Vec3& outVelocity, bool& outGrounde
 }
 
 void Scene::update(float dt) {
-  // ---- dt spike confirmation (prints first 60 frames only) ----
+  // ---- dt confirmation (prints first 60 frames only) ----
   static int s_frames = 0;
 
-  // Gameplay update (static objects)
   for (auto& obj : m_objects) {
     if (obj) obj->update(dt);
   }
 
-  // Static colliders might change later (destruction). For now, rebuild each frame is cheap.
   rebuildStaticAABBs();
 
-  // Step rigid-body world (with SAFE clamp, no double-step risk)
   if (dt < 0.0f) dt = 0.0f;
 
   const float fixed = m_rb.fixedDt;
@@ -206,15 +204,12 @@ void Scene::update(float dt) {
   if (dt > maxDt) dt = maxDt;
 
   if (s_frames < 60) {
-    // Prints enough to confirm if the first frames are huge.
-    // If you see inDt >> maxDt early, that’s the spike.
-    printf("[Scene] dt in=%f clamped=%f fixed=%f maxDt=%f\n", inDt, dt, fixed, maxDt);
+    std::printf("[Scene] dt in=%f clamped=%f fixed=%f maxDt=%f\n", inDt, dt, fixed, maxDt);
   }
   s_frames++;
 
   m_rb.step(dt);
 
-  // Collide player sphere against crates + platforms + ground
   m_playerCenterOut = m_playerCenter;
   m_playerVelOut = m_playerVel;
   m_playerGroundedOut = false;
@@ -225,19 +220,13 @@ void Scene::update(float dt) {
 }
 
 void Scene::render(const Mat4& view, const Mat4& proj) {
-  // Debug visualization lives in renderDebug().
   renderDebug(view, proj);
 }
 
 static void LoadMat4_GL(int mode, const Mat4& M) {
 #ifdef FE_NATIVE
-glMatrixMode(GL_PROJECTION);
-glLoadIdentity();
-gluPerspective(70.0, 16.0/9.0, 0.01, 200.0); // if you don't have GLU, use glFrustum (below)
-
-glMatrixMode(GL_MODELVIEW);
-glLoadIdentity();
-glTranslatef(0.f, -1.0f, -8.0f); // pull camera back a bit
+  glMatrixMode(mode);
+  glLoadMatrixf(M.m); // engine matrix path (we'll fix transpose later if needed)
 #else
   (void)mode; (void)M;
 #endif
@@ -245,23 +234,40 @@ glTranslatef(0.f, -1.0f, -8.0f); // pull camera back a bit
 
 void Scene::renderDebug(const Mat4& view, const Mat4& proj) {
 #ifdef FE_NATIVE
-  LoadMat4_GL(GL_PROJECTION, proj);
-  LoadMat4_GL(GL_MODELVIEW,  view);
+  // ---- TEMP TEST CAMERA (NO GLU) ----
+  // This isolates whether the engine's view/proj matrices are the problem.
+  glMatrixMode(GL_PROJECTION);
+  glLoadIdentity();
+
+  const float nearZ  = 0.01f;
+  const float farZ   = 200.0f;
+  const float fovY   = 70.0f * 3.1415926f / 180.0f;
+  const float aspect = 16.0f / 9.0f;
+
+  const float top = std::tanf(fovY * 0.5f) * nearZ;
+  const float right = top * aspect;
+
+  glFrustum(-right, right, -top, top, nearZ, farZ);
+
+  glMatrixMode(GL_MODELVIEW);
+  glLoadIdentity();
+  glTranslatef(0.f, -1.0f, -8.0f);
+
+  // If you want to switch back to engine matrices later, use:
+  // LoadMat4_GL(GL_PROJECTION, proj);
+  // LoadMat4_GL(GL_MODELVIEW,  view);
 
   glEnable(GL_DEPTH_TEST);
   glDisable(GL_CULL_FACE);
 
-  // Grid
   glColor3f(0.6f, 0.6f, 0.6f);
   DrawGrid(20.0f, 1.0f);
 
-  // Static platforms
   glColor3f(0.2f, 0.9f, 0.2f);
   for (const auto& a : m_static) {
     DrawAABB(a.min, a.max);
   }
 
-  // Dynamic crates (OBBs)
   glColor3f(0.9f, 0.7f, 0.2f);
   for (const auto& b : m_rb.bodies()) {
     DrawOBB(b);
