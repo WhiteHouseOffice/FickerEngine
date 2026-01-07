@@ -113,7 +113,7 @@ if (invertX) mdx = -mdx;
 if (invertY) mdy = -mdy;
 
 // Apply rotation
-m_yaw   += mdx * sens;
+m_yaw   -= mdx * sens;
 m_pitch += mdy * sens;
 
 // --- yaw: infinite, wrapped ---
