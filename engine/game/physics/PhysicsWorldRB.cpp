@@ -10,7 +10,7 @@ static inline float len2(const Vec3& v){ return dot3(v,v); }
 static inline Vec3 clampVec3(const Vec3& v, const Vec3& mn, const Vec3& mx) {
   return Vec3(
     (v.x < mn.x) ? mn.x : (v.x > mx.x ? mx.x : v.x),
-    (v.y < mn.y) ? mn.y : (v.y > mx.y ? mx.y : v.y),
+    (v.y < mn.y) ? mn.y : (v.y > mx.y ? mx.x : v.y),
     (v.z < mn.z) ? mn.z : (v.z > mx.z ? mx.z : v.z)
   );
 }
@@ -29,7 +29,6 @@ uint32_t PhysicsWorldRB::createBox(const Vec3& pos, const Vec3& halfExtents, flo
     b.invMass = 0.f;
     b.invInertiaLocal = Mat3{};
   }
-
   m_bodies.push_back(b);
   return b.id;
 }
@@ -55,7 +54,6 @@ Mat3 PhysicsWorldRB::invInertiaWorld(const RigidBoxBody& b) const {
 
 void PhysicsWorldRB::applyImpulse(RigidBoxBody& b, const Vec3& impulse, const Vec3& r) {
   if (!b.isDynamic()) return;
-
   b.linearVelocity = b.linearVelocity + impulse * b.invMass;
 
   const Mat3 invIw = invInertiaWorld(b);
@@ -165,25 +163,19 @@ static bool satOBBOBB(const RigidBoxBody& A, const RigidBoxBody& B, Vec3& outN, 
 
     if (pen < bestPen) {
       bestPen = pen;
-      // NOTE: This axis is from A -> B
       bestAxis = (dot3(d, a) < 0.f) ? (a * -1.f) : a;
     }
   }
 
-  outN = bestAxis;   // A -> B
+  outN = bestAxis;
   outPen = bestPen;
   return true;
 }
 
 void PhysicsWorldRB::contactsBoxBox(const RigidBoxBody& A, const RigidBoxBody& B, std::vector<Contact>& out) {
-  Vec3 nAB; float pen;
-  if (!satOBBOBB(A,B,nAB,pen)) return;
+  Vec3 n; float pen;
+  if (!satOBBOBB(A,B,n,pen)) return;
 
-  // We use a consistent convention everywhere:
-  // Contact normal points FROM B -> A (the direction you push A out).
-  Vec3 n = nAB * -1.f;
-
-  // Collect contact points by vertex inclusion (gives multiple points for face contacts)
   std::vector<Vec3> pts;
   pts.reserve(16);
 
@@ -197,13 +189,11 @@ void PhysicsWorldRB::contactsBoxBox(const RigidBoxBody& A, const RigidBoxBody& B
     if (pointInOBB(v,A)) pts.push_back(v);
   }
 
-  // Fallback: single point midway between centers projected along normal
   if (pts.empty()) {
-    Vec3 p = (A.position + B.position) * 0.5f + n * (pen * 0.5f);
+    Vec3 p = (A.position + B.position) * 0.5f - n * (pen * 0.5f);
     pts.push_back(p);
   }
 
-  // Reduce to at most 4 points (fast)
   if (pts.size() > 4) pts.resize(4);
 
   for (auto& p : pts) {
@@ -211,41 +201,68 @@ void PhysicsWorldRB::contactsBoxBox(const RigidBoxBody& A, const RigidBoxBody& B
     c.a = A.id;
     c.b = B.id;
     c.point = p;
-    c.normal = n;          // B -> A
+    c.normal = n;
     c.penetration = pen;
     out.push_back(c);
   }
 }
 
 void PhysicsWorldRB::contactsBoxGround(const RigidBoxBody& A, std::vector<Contact>& out) {
-  // If lowest vertex below ground -> contact
-  float minY = 1e30f;
-  Vec3 minP = A.position;
-  const int s[2]={-1,1};
+  Vec3 verts[8];
+  int k = 0;
+  const int s[2] = {-1, 1};
   for (int ix: s) for (int iy: s) for (int iz: s) {
-    Vec3 v = obbVertex(A, ix,iy,iz);
-    if (v.y < minY) { minY=v.y; minP=v; }
+    verts[k++] = obbVertex(A, ix, iy, iz);
   }
-  if (minY < groundY) {
+
+  float minY = 1e30f;
+  for (int i=0;i<8;++i) minY = std::min(minY, verts[i].y);
+
+  if (minY >= groundY) return;
+
+  const float eps = 0.02f; // "bottom face thickness" for manifold contacts
+  int added = 0;
+  for (int i=0;i<8 && added<4;++i) {
+    if (verts[i].y <= minY + eps) {
+      Contact c;
+      c.a = A.id; c.b = 0;
+      c.point = verts[i];
+      c.normal = Vec3(0,1,0);
+      c.penetration = (groundY - verts[i].y);
+      out.push_back(c);
+      added++;
+    }
+  }
+
+  if (added == 0) {
+    int imin = 0;
+    for (int i=1;i<8;++i) if (verts[i].y < verts[imin].y) imin = i;
     Contact c;
     c.a = A.id; c.b = 0;
-    c.point = minP;
-    c.normal = Vec3(0,1,0);     // ground -> box (B -> A)
-    c.penetration = (groundY - minY);
+    c.point = verts[imin];
+    c.normal = Vec3(0,1,0);
+    c.penetration = (groundY - verts[imin].y);
     out.push_back(c);
   }
 }
 
 void PhysicsWorldRB::contactsBoxStaticAABB(const RigidBoxBody& A, const AABB& S, std::vector<Contact>& out) {
-  // Approximate OBB vs AABB via sampling vertices against AABB
+  // Vertex sampling vs AABB, but:
+  // - use epsilon (so "near inside" counts)
+  // - gather up to 4 contacts
+  // - bias toward top face so resting doesn't get sideways-ejected
   const int s[2]={-1,1};
+  const float insideEps2 = 1e-6f;
+  const float topBias = 0.03f; // if within this of top face, force normal up
+
   for (int ix: s) for (int iy: s) for (int iz: s) {
     Vec3 v = obbVertex(A, ix,iy,iz);
     Vec3 cl = clampVec3(v, S.min, S.max);
     Vec3 d = v - cl;
     float d2 = len2(d);
-    if (d2 <= 1e-10f) {
-      // vertex is inside AABB => push out along best axis
+
+    // Treat as contact if vertex is inside (or very slightly outside due to numeric noise)
+    if (d2 <= insideEps2) {
       float px = std::min(v.x - S.min.x, S.max.x - v.x);
       float py = std::min(v.y - S.min.y, S.max.y - v.y);
       float pz = std::min(v.z - S.min.z, S.max.z - v.z);
@@ -253,24 +270,40 @@ void PhysicsWorldRB::contactsBoxStaticAABB(const RigidBoxBody& A, const AABB& S,
       Vec3 n(0,1,0);
       float pen = py;
 
-      if (px < pen) {
-        pen=px;
-        n = ((v.x - (S.min.x+S.max.x)*0.5f) < 0) ? Vec3(-1,0,0) : Vec3(1,0,0);
-      }
-      if (pz < pen) {
-        pen=pz;
-        n = ((v.z - (S.min.z+S.max.z)*0.5f) < 0) ? Vec3(0,0,-1) : Vec3(0,0,1);
+      // If we're basically on the top face, choose up, not sideways.
+      if (py <= topBias) {
+        n = Vec3(0,1,0);
+        pen = py;
+      } else {
+        // Otherwise pick least-penetration axis
+        if (px < pen) {
+          pen = px;
+          n = (v.x - (S.min.x+S.max.x)*0.5f) < 0 ? Vec3(-1,0,0) : Vec3(1,0,0);
+        }
+        if (pz < pen) {
+          pen = pz;
+          n = (v.z - (S.min.z+S.max.z)*0.5f) < 0 ? Vec3(0,0,-1) : Vec3(0,0,1);
+        }
       }
 
-      // n points from AABB -> point (static -> box): B -> A convention OK
       Contact c;
       c.a = A.id; c.b = 0;
       c.point = v;
       c.normal = n;
       c.penetration = pen;
       out.push_back(c);
-      if (out.size() >= 4) break;
+
+      if (out.size() >= 128) return;
+      if (out.size() % 4 == 0) {
+        // keep manifold size bounded; caller already reserves
+      }
+      if (out.size() >= 4) {
+        // Don't spam too many per body per static; keep it quick
+        // (This function may be called per static AABB)
+      }
     }
+
+    if (out.size() >= 4) break; // per call, cap contacts
   }
 }
 
@@ -301,7 +334,6 @@ void PhysicsWorldRB::solveVelocity(const Contact& c) {
   const bool hasB = (c.b != 0);
   RigidBoxBody* B = hasB ? get(c.b) : nullptr;
 
-  // Normal convention: B -> A (direction to push A out)
   Vec3 n = c.normal;
   const float n2 = dot3(n, n);
   if (n2 < 1e-12f) return;
@@ -312,9 +344,9 @@ void PhysicsWorldRB::solveVelocity(const Contact& c) {
 
   Vec3 vb{0,0,0};
   Vec3 rb{0,0,0};
+
   float invMassB = 0.f;
   Mat3 invIBw{};
-
   if (B) {
     rb = c.point - B->position;
     vb = B->linearVelocity + cross(B->angularVelocity, rb);
@@ -322,16 +354,11 @@ void PhysicsWorldRB::solveVelocity(const Contact& c) {
     invIBw = invInertiaWorld(*B);
   }
 
-  // Relative velocity at contact (A wrt B)
   Vec3 rv = va - vb;
   float vn = dot3(rv, n);
-
-  // If vn > 0, A is moving away from B along n => separating
   if (vn > 0.f) return;
 
   Mat3 invIAw = invInertiaWorld(*A);
-
-  // Effective mass along normal
   Vec3 raXn = cross(ra, n);
   Vec3 termA = mat3Mul(invIAw, raXn);
   float kA = A->invMass + dot3(cross(termA, ra), n);
@@ -344,26 +371,24 @@ void PhysicsWorldRB::solveVelocity(const Contact& c) {
   }
 
   float denom = kA + kB;
-  if (denom <= 1e-8f) return;
+  if (std::fabs(denom) < 1e-8f) return;
 
-  float j = -(1.f + restitution) * vn / denom;
-  if (j <= 0.f) return;
+  // Resting-contact handling: disable bounce when relative normal speed is tiny.
+  float e = restitution;
+  if (std::fabs(vn) < 0.8f) e = 0.0f;
 
+  float j = -(1.f + e) * vn / denom;
   Vec3 impulse = n * j;
+  applyImpulse(*A, impulse * -1.f, ra);
+  if (B) applyImpulse(*B, impulse, rb);
 
-  // Apply impulses with our convention:
-  // A gets +impulse, B gets -impulse
-  applyImpulse(*A, impulse, ra);
-  if (B) applyImpulse(*B, impulse * -1.f, rb);
-
-  // --- friction (Coulomb) ---
-  rv = (A->linearVelocity + cross(A->angularVelocity, ra))
-     - (B ? (B->linearVelocity + cross(B->angularVelocity, rb)) : Vec3(0,0,0));
-
+  // friction (Coulomb)
+  rv = (A->linearVelocity + cross(A->angularVelocity, ra)) - (B ? (B->linearVelocity + cross(B->angularVelocity, rb)) : Vec3(0,0,0));
   Vec3 t = rv - n * dot3(rv, n);
   float t2 = len2(t);
   if (t2 > 1e-10f) {
-    t = t * (1.f / std::sqrt(t2));
+    float invT = 1.f / std::sqrt(t2);
+    t = t * invT;
 
     Vec3 raXt = cross(ra, t);
     Vec3 termAt = mat3Mul(invIAw, raXt);
@@ -379,18 +404,16 @@ void PhysicsWorldRB::solveVelocity(const Contact& c) {
     float denomT = ktA + ktB;
     if (denomT > 1e-8f) {
       float jt = -dot3(rv, t) / denomT;
-
-      const float maxF = friction * j;
+      float maxF = friction * j;
       if (jt >  maxF) jt =  maxF;
       if (jt < -maxF) jt = -maxF;
 
       Vec3 impT = t * jt;
-      applyImpulse(*A, impT, ra);
-      if (B) applyImpulse(*B, impT * -1.f, rb);
+      applyImpulse(*A, impT * -1.f, ra);
+      if (B) applyImpulse(*B, impT, rb);
     }
   }
 
-  // wake on contact
   A->asleep = false;
   A->sleepTimer = 0.f;
   if (B) { B->asleep=false; B->sleepTimer=0.f; }
@@ -401,16 +424,17 @@ void PhysicsWorldRB::solvePosition(const Contact& c) {
   if (!A) return;
   RigidBoxBody* B = (c.b != 0) ? get(c.b) : nullptr;
 
-  const float slop = 0.002f;
-  const float percent = 0.8f;
+  // Gentler correction to avoid jitter + tunneling in stacks
+  const float slop = 0.01f;
+  const float percent = 0.25f;
+
   float pen = std::max(0.f, c.penetration - slop);
   if (pen <= 0.f) return;
 
-  // Normal convention: B -> A (push A out)
   Vec3 n = c.normal;
-  const float n2 = dot3(n,n);
+  float n2 = dot3(n,n);
   if (n2 < 1e-12f) return;
-  n = n * (1.f / std::sqrt(n2));
+  n = n * (1.0f / std::sqrt(n2));
 
   float wA = A->invMass;
   float wB = B ? B->invMass : 0.f;
@@ -419,9 +443,16 @@ void PhysicsWorldRB::solvePosition(const Contact& c) {
 
   Vec3 corr = n * (percent * pen / wSum);
 
-  // Push A along +n, push B along -n
-  if (A->isDynamic()) A->position = A->position + corr * wA;
-  if (B && B->isDynamic()) B->position = B->position - corr * wB;
+  // Clamp correction magnitude (prevents blow-ups on bad contacts)
+  const float maxCorr = 0.05f;
+  float c2 = len2(corr);
+  if (c2 > maxCorr*maxCorr) {
+    float invL = 1.0f / std::sqrt(c2);
+    corr = corr * (maxCorr * invL);
+  }
+
+  if (A->isDynamic()) A->position = A->position - corr * wA;
+  if (B && B->isDynamic()) B->position = B->position + corr * wB;
 }
 
 void PhysicsWorldRB::updateSleeping(RigidBoxBody& b, float h) {
@@ -455,19 +486,14 @@ bool PhysicsWorldRB::collidePlayerSphere(Vec3& center, float radius, Vec3& playe
     const Mat3 R = quatToMat3(qn);
     const Mat3 Rt = mat3Transpose(R);
 
-    // sphere center in box local
     Vec3 d = center - b.position;
     Vec3 local = mat3Mul(Rt, d);
 
-    Vec3 cl = clampVec3(local,
-      Vec3(-b.halfExtents.x, -b.halfExtents.y, -b.halfExtents.z),
-      Vec3( b.halfExtents.x,  b.halfExtents.y,  b.halfExtents.z)
-    );
-
+    Vec3 cl = clampVec3(local, Vec3(-b.halfExtents.x, -b.halfExtents.y, -b.halfExtents.z),
+                               Vec3( b.halfExtents.x,  b.halfExtents.y,  b.halfExtents.z));
     Vec3 closest = mat3Mul(R, cl) + b.position;
     Vec3 delta = center - closest;
     float d2 = len2(delta);
-
     if (d2 < radius*radius && d2 > 1e-10f) {
       float dist = std::sqrt(d2);
       Vec3 n = delta * (1.f/dist);
@@ -480,9 +506,19 @@ bool PhysicsWorldRB::collidePlayerSphere(Vec3& center, float radius, Vec3& playe
       float vn = dot3(playerVel, n);
       if (vn < 0.f) playerVel = playerVel - n * vn;
 
-      // push box a bit (simple)
-      float push = 6.0f;
-      b.linearVelocity = b.linearVelocity + (n * (-push * vn)) * b.invMass;
+      // --- push boxes: HORIZONTAL ONLY (prevents "rocket crate" when standing/jumping) ---
+      Vec3 nh(n.x, 0.0f, n.z);
+      float nh2 = dot3(nh, nh);
+      if (nh2 > 1e-8f) {
+        nh = nh * (1.0f / std::sqrt(nh2));
+        float vnh = dot3(playerVel, nh);
+        if (vnh < 0.f) {
+          const float push = 2.5f; // tune 1..6
+          b.linearVelocity = b.linearVelocity + (nh * (-push * vnh));
+          b.asleep = false;
+          b.sleepTimer = 0.f;
+        }
+      }
 
       if (n.y > 0.6f) grounded = true;
       hit = true;
