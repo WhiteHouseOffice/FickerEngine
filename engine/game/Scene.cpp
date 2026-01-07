@@ -3,6 +3,7 @@
 
 // NEW
 #include "geom/ColoredQuad.h"
+#include "geom/ColoredBox.h"
 #include "render/RenderMesh.h"
 
 #include <cstdio>
@@ -166,30 +167,21 @@ static void DrawOBB(const fe::RigidBoxBody& b) {
 // ------------------------------------------------------------
 // Colored surface quad using RenderMesh + ColoredQuad
 // ------------------------------------------------------------
-static void DrawColoredSurfaceQuad() {
+static void DrawColoredSurfaceBox() {
 #ifdef FE_NATIVE
-  static bool once = false;
-  if (!once) {
-    once = true;
-    std::printf("[Scene] DrawColoredSurfaceQuad() running\n");
-    std::fflush(stdout);
-  }
-
   glDisable(GL_LIGHTING);
   glDisable(GL_TEXTURE_2D);
 
-  // keep it "can't miss" for now
-  glDisable(GL_CULL_FACE);
-  glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-
-  auto q = ColoredQuad::make(
-    Vec3(0.0f, 1.0f, -5.0f),
-    6.0f, 6.0f,
-    ColoredQuad::RGBA(255,   0,   0, 255),
-    ColoredQuad::RGBA(0,   255,   0, 255),
-    ColoredQuad::RGBA(0,     0, 255, 255),
-    ColoredQuad::RGBA(255, 255,   0, 255),
-    true
+  // Use your culling system now that the mesh is closed
+  auto box = engine::geom::ColoredBox::make(
+    0.0f, 1.2f, -5.0f,   // center
+    0.8f, 0.8f, 0.8f,    // half extents
+    engine::geom::ColoredBox::RGBA(255,  50,  50),  // +X
+    engine::geom::ColoredBox::RGBA( 50, 255,  50),  // -X
+    engine::geom::ColoredBox::RGBA( 50,  50, 255),  // +Y
+    engine::geom::ColoredBox::RGBA(255, 255,  50),  // -Y
+    engine::geom::ColoredBox::RGBA( 50, 255, 255),  // +Z
+    engine::geom::ColoredBox::RGBA(255,  50, 255)   // -Z
   );
 
   auto unpack = [](uint32_t rgba, float& r, float& g, float& b, float& a) {
@@ -200,27 +192,24 @@ static void DrawColoredSurfaceQuad() {
   };
 
   std::vector<engine::render::VertexPC> verts;
-  verts.reserve(q.vertices.size());
-  for (const auto& v : q.vertices) {
+  verts.reserve(box.vertices.size());
+  for (const auto& v : box.vertices) {
     float r,g,b,a;
     unpack(v.rgba, r,g,b,a);
-    verts.push_back(engine::render::VertexPC{ v.pos.x, v.pos.y, v.pos.z, r,g,b,a });
+    verts.push_back({ v.x, v.y, v.z, r,g,b,a });
   }
 
   std::vector<uint16_t> inds;
-  inds.reserve(q.indices.size());
-  for (uint32_t idx : q.indices) inds.push_back((uint16_t)idx);
+  inds.reserve(box.indices.size());
+  for (uint32_t i : box.indices) inds.push_back((uint16_t)i);
 
   engine::render::RenderMesh mesh;
   mesh.SetPrimitive(engine::render::RenderMesh::Primitive::Triangles);
-  mesh.SetBackfaceCulling(false);
+  mesh.SetBackfaceCulling(true);
+  mesh.SetFrontFaceWinding(engine::render::RenderMesh::Winding::CCW);
   mesh.SetVertices(verts);
   mesh.SetIndices(inds);
-
-  // draw "on top" for visibility
-  glDisable(GL_DEPTH_TEST);
   mesh.Draw();
-  glEnable(GL_DEPTH_TEST);
 #endif
 }
 
@@ -438,7 +427,7 @@ void Scene::renderDebug(const Mat4& view, const Mat4& proj) {
     DrawOBB(b);
   }
 
-  DrawColoredSurfaceQuad();
+  DrawColoredSurfaceBox();
 
   glColor3f(1.f, 1.f, 1.f);
 #else
