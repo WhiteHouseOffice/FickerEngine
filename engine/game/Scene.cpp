@@ -213,26 +213,35 @@ void Scene::update(float dt) {
 void Scene::render(const Mat4& view, const Mat4& proj) {
   // For now, we render via the debug path so we always see something.
   // Later we can move real mesh rendering back here.
-  renderDebug(view, proj);
 }
 
 
-static void LoadMat4_GL(int mode, const Mat4& m) {
+static void LoadMat4_GL(int mode, const Mat4& M) {
 #ifdef FE_NATIVE
+  // Your Mat4 stores floats in a flat array (likely row-major).
+  // We'll upload as column-major for legacy OpenGL by transposing.
+
   float f[16];
 
-  // row-major Mat4 -> column-major OpenGL
-  f[0]  = m.m[0][0]; f[4]  = m.m[0][1]; f[8]  = m.m[0][2]; f[12] = m.m[0][3];
-  f[1]  = m.m[1][0]; f[5]  = m.m[1][1]; f[9]  = m.m[1][2]; f[13] = m.m[1][3];
-  f[2]  = m.m[2][0]; f[6]  = m.m[2][1]; f[10] = m.m[2][2]; f[14] = m.m[2][3];
-  f[3]  = m.m[3][0]; f[7]  = m.m[3][1]; f[11] = m.m[3][2]; f[15] = m.m[3][3];
+  // Interpret M.m as row-major: M(row, col) = M.m[row*4 + col]
+  auto at = [&](int r, int c) -> float {
+    return M.m[r * 4 + c];
+  };
+
+  // Build column-major array for OpenGL:
+  // f[col*4 + row] = at(row, col)
+  f[0]  = at(0,0); f[4]  = at(0,1); f[8]  = at(0,2); f[12] = at(0,3);
+  f[1]  = at(1,0); f[5]  = at(1,1); f[9]  = at(1,2); f[13] = at(1,3);
+  f[2]  = at(2,0); f[6]  = at(2,1); f[10] = at(2,2); f[14] = at(2,3);
+  f[3]  = at(3,0); f[7]  = at(3,1); f[11] = at(3,2); f[15] = at(3,3);
 
   glMatrixMode(mode);
   glLoadMatrixf(f);
 #else
-  (void)mode; (void)m;
+  (void)mode; (void)M;
 #endif
 }
+
 
 
 void Scene::renderDebug(const Mat4& view, const Mat4& proj) {
