@@ -140,12 +140,13 @@ void Scene::rebuildStaticAABBs() {
   m_rb.setStaticAABBs(m_static);
 }
 
-static void SpawnCrates(fe::RigidBodyWorld& rb) {
-  // Three crates, same as before
+template <typename RB>
+static void SpawnCrates(RB& rb) {
   rb.createBox(Vec3(0.0f, 1.30f, 0.0f), Vec3(0.50f, 0.50f, 0.50f), 2.0f);
   rb.createBox(Vec3(0.0f, 2.35f, 0.0f), Vec3(0.50f, 0.50f, 0.50f), 2.0f);
   rb.createBox(Vec3(3.75f, 2.10f, 0.0f), Vec3(0.50f, 0.50f, 0.50f), 2.0f);
 }
+
 
 void Scene::init() {
   // ---- Static world platforms ----
