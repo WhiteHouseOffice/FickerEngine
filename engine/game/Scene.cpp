@@ -1,15 +1,15 @@
 #include "game/Scene.h"
 #include "game/GameObject.h"
 
-// NEW
 #include "geom/ColoredQuad.h"
 #include "geom/ColoredBox.h"
+#include "geom/TerrainGrid.h"
 #include "render/RenderMesh.h"
 
 #include <cstdio>
 #include <cmath>
 #include <memory>
-#include <vector> // NEW
+#include <vector>
 
 #ifdef FE_NATIVE
   #include <GL/gl.h>
@@ -34,7 +34,7 @@ static bool fe_isfiniteRigidBody(const fe::RigidBoxBody& b) {
 }
 
 // ------------------------------------------------------------
-// Debug draw helpers
+// Debug draw helpers (immediate mode)
 // ------------------------------------------------------------
 static void DrawGrid(float halfSize, float step) {
 #ifdef FE_NATIVE
@@ -165,37 +165,63 @@ static void DrawOBB(const fe::RigidBoxBody& b) {
 }
 
 // ------------------------------------------------------------
-// Colored surface quad using RenderMesh + ColoredQuad
+// RenderMesh helpers
 // ------------------------------------------------------------
-static void DrawColoredSurfaceBox() {
-#ifdef FE_NATIVE
-  glDisable(GL_LIGHTING);
-  glDisable(GL_TEXTURE_2D);
+static void UnpackRGBA(uint32_t rgba, float& r, float& g, float& b, float& a) {
+  r = float((rgba >> 24) & 0xFF) / 255.0f;
+  g = float((rgba >> 16) & 0xFF) / 255.0f;
+  b = float((rgba >>  8) & 0xFF) / 255.0f;
+  a = float((rgba >>  0) & 0xFF) / 255.0f;
+}
 
-  // Use your culling system now that the mesh is closed
-  auto box = engine::geom::ColoredBox::make(
-    0.0f, 1.2f, -5.0f,   // center
-    0.8f, 0.8f, 0.8f,    // half extents
-    engine::geom::ColoredBox::RGBA(255,  50,  50),  // +X
-    engine::geom::ColoredBox::RGBA( 50, 255,  50),  // -X
-    engine::geom::ColoredBox::RGBA( 50,  50, 255),  // +Y
-    engine::geom::ColoredBox::RGBA(255, 255,  50),  // -Y
-    engine::geom::ColoredBox::RGBA( 50, 255, 255),  // +Z
-    engine::geom::ColoredBox::RGBA(255,  50, 255)   // -Z
+static void DrawTerrain() {
+#ifdef FE_NATIVE
+  auto t = engine::geom::TerrainGrid::make(
+    60.0f, 60.0f, 1.0f,   // sizeX, sizeZ, step
+    0.0f, 1.2f            // baseY, amplitude
   );
 
-  auto unpack = [](uint32_t rgba, float& r, float& g, float& b, float& a) {
-    r = float((rgba >> 24) & 0xFF) / 255.0f;
-    g = float((rgba >> 16) & 0xFF) / 255.0f;
-    b = float((rgba >>  8) & 0xFF) / 255.0f;
-    a = float((rgba >>  0) & 0xFF) / 255.0f;
-  };
+  std::vector<engine::render::VertexPC> verts;
+  verts.reserve(t.vertices.size());
+  for (const auto& v : t.vertices) {
+    float r,g,b,a;
+    UnpackRGBA(v.rgba, r,g,b,a);
+    verts.push_back({ v.x, v.y, v.z, r,g,b,a });
+  }
+
+  std::vector<uint16_t> inds;
+  inds.reserve(t.indices.size());
+  for (uint32_t i : t.indices) inds.push_back((uint16_t)i);
+
+  engine::render::RenderMesh mesh;
+  mesh.SetPrimitive(engine::render::RenderMesh::Primitive::Triangles);
+  mesh.SetBackfaceCulling(true);
+  mesh.SetFrontFaceWinding(engine::render::RenderMesh::Winding::CW); // project seems flipped
+  mesh.SetVertices(verts);
+  mesh.SetIndices(inds);
+  mesh.Draw();
+#endif
+}
+
+static void DrawSolidAABBBox(const Vec3& mn, const Vec3& mx, uint32_t col) {
+#ifdef FE_NATIVE
+  const float cx = 0.5f * (mn.x + mx.x);
+  const float cy = 0.5f * (mn.y + mx.y);
+  const float cz = 0.5f * (mn.z + mx.z);
+  const float hx = 0.5f * (mx.x - mn.x);
+  const float hy = 0.5f * (mx.y - mn.y);
+  const float hz = 0.5f * (mx.z - mn.z);
+
+  auto box = engine::geom::ColoredBox::make(
+    cx, cy, cz, hx, hy, hz,
+    col, col, col, col, col, col
+  );
 
   std::vector<engine::render::VertexPC> verts;
   verts.reserve(box.vertices.size());
   for (const auto& v : box.vertices) {
     float r,g,b,a;
-    unpack(v.rgba, r,g,b,a);
+    UnpackRGBA(v.rgba, r,g,b,a);
     verts.push_back({ v.x, v.y, v.z, r,g,b,a });
   }
 
@@ -242,14 +268,13 @@ void Scene::rebuildStaticAABBs() {
 
 template <typename RB>
 static void SpawnCrates(RB& rb) {
-  // Lift slightly so we don't start in exact touching contact.
   rb.createBox(Vec3(0.0f, 5.0f, 0.0f), Vec3(0.50f, 0.50f, 0.50f), 2.0f);
   rb.createBox(Vec3(0.0f, 6.2f, 0.0f), Vec3(0.50f, 0.50f, 0.50f), 2.0f);
   rb.createBox(Vec3(3.75f, 5.6f, 0.0f), Vec3(0.50f, 0.50f, 0.50f), 2.0f);
 }
 
 // ------------------------------------------------------------
-// Required Scene API (Engine links against these)
+// Required Scene API
 // ------------------------------------------------------------
 void Scene::init() {
   // ---- Static world platforms ----
@@ -282,7 +307,6 @@ void Scene::init() {
   m_rb.velocityIters = 12;
   m_rb.positionIters = 6;
 
-  // Crates spawn immediately (per your request)
   SpawnCrates(m_rb);
 }
 
@@ -302,16 +326,14 @@ bool Scene::getPlayerSphere(Vec3& outCenter, Vec3& outVelocity, bool& outGrounde
 }
 
 void Scene::update(float dt) {
-  static int s_frames = 0;
+  static int s_accumFrames = 0;
   static float s_accum = 0.0f;
 
-  // Debug: show whether bodies actually get deleted (they weren't)
   static int s_print = 0;
   if ((s_print++ % 60) == 0) {
     std::printf("[Scene] RB bodies=%zu\n", m_rb.bodies().size());
   }
 
-  // Gameplay update
   for (auto& obj : m_objects) {
     if (obj) obj->update(dt);
   }
@@ -323,10 +345,8 @@ void Scene::update(float dt) {
   const float fixed = m_rb.fixedDt;
   const float maxDt = fixed * (float)m_rb.maxSubsteps;
 
-  // Clamp input dt to avoid huge catch-up after pauses
   if (dt > maxDt) dt = maxDt;
 
-  // Fixed-step accumulator
   s_accum += dt;
   if (s_accum > maxDt) s_accum = maxDt;
 
@@ -336,6 +356,7 @@ void Scene::update(float dt) {
     s_accum -= fixed;
     steps++;
   }
+
   if ((s_print % 60) == 0 && !m_rb.bodies().empty()) {
     const auto& b0 = m_rb.bodies()[0];
     std::printf("[RB] b0 pos=(%.2f %.2f %.2f) vel=(%.2f %.2f %.2f)\n",
@@ -343,8 +364,7 @@ void Scene::update(float dt) {
       b0.linearVelocity.x, b0.linearVelocity.y, b0.linearVelocity.z);
   }
 
-  // Extended non-finite detection: check orientation too (catch invisible "despawn")
-  static int s_nanCooldown = 0; // frames
+  static int s_nanCooldown = 0;
   const auto& bodies = m_rb.bodies();
 
   bool bad = false;
@@ -361,16 +381,12 @@ void Scene::update(float dt) {
       once = true;
     }
 
-    // Keep player outputs valid so controls still work.
     m_playerCenterOut = m_playerCenter;
     m_playerVelOut    = m_playerVel;
     m_playerGroundedOut = false;
-
-    // Don't run collidePlayerSphere against a broken rigid world.
     return;
   }
 
-  // Player collision
   m_playerCenterOut = m_playerCenter;
   m_playerVelOut = m_playerVel;
   m_playerGroundedOut = false;
@@ -379,11 +395,10 @@ void Scene::update(float dt) {
     (void)m_rb.collidePlayerSphere(m_playerCenterOut, m_playerRadius, m_playerVelOut, &m_playerGroundedOut);
   }
 
-  s_frames++;
+  s_accumFrames++;
 }
 
 void Scene::render(const Mat4& view, const Mat4& proj) {
-  // Keep the existing approach: render via debug path so we always see something.
   renderDebug(view, proj);
 }
 
@@ -401,22 +416,32 @@ static void LoadMat4_GL(int mode, const Mat4& M) {
 
 void Scene::renderDebug(const Mat4& view, const Mat4& proj) {
 #ifdef FE_NATIVE
-  static bool once = false;
-  if (!once) {
-    once = true;
-    std::printf("[Scene] renderDebug() running\n");
-    std::fflush(stdout);
-  }
-
   LoadMat4_GL(GL_PROJECTION, proj);
   LoadMat4_GL(GL_MODELVIEW,  view);
 
   glEnable(GL_DEPTH_TEST);
   glDisable(GL_CULL_FACE);
 
-  glColor3f(0.6f, 0.6f, 0.6f);
-  DrawGrid(20.0f, 1.0f);
+  // 1) Terrain (triangles)
+  DrawTerrain();
 
+  // 2) Grid (lines)
+  glColor3f(0.55f, 0.55f, 0.55f);
+  DrawGrid(40.0f, 1.0f);
+
+  // 3) Solid platforms (from static AABBs)
+  for (const auto& a : m_static) {
+    DrawSolidAABBBox(a.min, a.max, engine::geom::ColoredBox::RGBA(90, 140, 220, 255));
+  }
+
+  // 4) Solid crates (AABB proxy)
+  for (const auto& b : m_rb.bodies()) {
+    Vec3 mn = b.position - b.halfExtents;
+    Vec3 mx = b.position + b.halfExtents;
+    DrawSolidAABBBox(mn, mx, engine::geom::ColoredBox::RGBA(220, 150, 70, 255));
+  }
+
+  // 5) Keep your wire debug too
   glColor3f(0.2f, 0.9f, 0.2f);
   for (const auto& a : m_static) {
     DrawAABB(a.min, a.max);
@@ -426,8 +451,6 @@ void Scene::renderDebug(const Mat4& view, const Mat4& proj) {
   for (const auto& b : m_rb.bodies()) {
     DrawOBB(b);
   }
-
-  DrawColoredSurfaceBox();
 
   glColor3f(1.f, 1.f, 1.f);
 #else
