@@ -164,7 +164,7 @@ static void DrawOBB(const fe::RigidBoxBody& b) {
 }
 
 // ------------------------------------------------------------
-// NEW: Colored surface quad using RenderMesh + ColoredQuad
+// Colored surface quad using RenderMesh + ColoredQuad
 // ------------------------------------------------------------
 static void DrawColoredSurfaceQuad() {
 #ifdef FE_NATIVE
@@ -172,10 +172,10 @@ static void DrawColoredSurfaceQuad() {
   glDisable(GL_LIGHTING);
   glDisable(GL_TEXTURE_2D);
 
-  // Create a colored quad slightly above y=0 to avoid z-fighting with grid lines.
+  // MOVE IT IN FRONT OF CAMERA + MAKE IT BIG (hard to miss)
   auto q = ColoredQuad::make(
-    Vec3(0.0f, 0.01f, 0.0f),
-    2.5f, 2.5f,
+    Vec3(0.0f, 1.0f, -5.0f),
+    6.0f, 6.0f,
     ColoredQuad::RGBA(255,   0,   0, 255), // red
     ColoredQuad::RGBA(0,   255,   0, 255), // green
     ColoredQuad::RGBA(0,     0, 255, 255), // blue
@@ -205,11 +205,17 @@ static void DrawColoredSurfaceQuad() {
 
   engine::render::RenderMesh mesh;
   mesh.SetPrimitive(engine::render::RenderMesh::Primitive::Triangles);
-  mesh.SetBackfaceCulling(true);
-  mesh.SetFrontFaceWinding(engine::render::RenderMesh::Winding::CCW);
+
+  // DISABLE CULLING FOR NOW (so winding can’t hide it)
+  mesh.SetBackfaceCulling(false);
+
   mesh.SetVertices(verts);
   mesh.SetIndices(inds);
+
+  // DISABLE DEPTH TEST JUST FOR THIS DRAW (so it can’t be hidden)
+  glDisable(GL_DEPTH_TEST);
   mesh.Draw();
+  glEnable(GL_DEPTH_TEST);
 #else
   // no-op on web path for now
 #endif
@@ -339,11 +345,12 @@ void Scene::update(float dt) {
     steps++;
   }
   if ((s_print % 60) == 0 && !m_rb.bodies().empty()) {
-  const auto& b0 = m_rb.bodies()[0];
-  std::printf("[RB] b0 pos=(%.2f %.2f %.2f) vel=(%.2f %.2f %.2f)\n",
-    b0.position.x, b0.position.y, b0.position.z,
-    b0.linearVelocity.x, b0.linearVelocity.y, b0.linearVelocity.z);
-}
+    const auto& b0 = m_rb.bodies()[0];
+    std::printf("[RB] b0 pos=(%.2f %.2f %.2f) vel=(%.2f %.2f %.2f)\n",
+      b0.position.x, b0.position.y, b0.position.z,
+      b0.linearVelocity.x, b0.linearVelocity.y, b0.linearVelocity.z);
+  }
+
   // Extended non-finite detection: check orientation too (catch invisible "despawn")
   static int s_nanCooldown = 0; // frames
   const auto& bodies = m_rb.bodies();
@@ -421,7 +428,7 @@ void Scene::renderDebug(const Mat4& view, const Mat4& proj) {
     DrawOBB(b);
   }
 
-  // NEW: draw a colored surface quad (triangles + colors + culling)
+  // Colored surface quad (triangles + colors)
   DrawColoredSurfaceQuad();
 
   glColor3f(1.f, 1.f, 1.f);
