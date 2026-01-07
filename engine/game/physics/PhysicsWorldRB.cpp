@@ -286,7 +286,13 @@ void PhysicsWorldRB::solveVelocity(const Contact& c) {
   const bool hasB = (c.b != 0);
   RigidBoxBody* B = hasB ? get(c.b) : nullptr;
 
-  const Vec3 n = c.normal;
+  Vec3 n = c.normal;
+const float n2 = dot3(n, n);
+if (n2 < 1e-12f) {
+  // Degenerate contact → skip
+  return;
+}
+n = n * (1.0f / std::sqrt(n2));
 
   Vec3 ra = c.point - A->position;
   Vec3 va = A->linearVelocity + cross(A->angularVelocity, ra);
@@ -323,7 +329,10 @@ void PhysicsWorldRB::solveVelocity(const Contact& c) {
   float denom = kA + kB;
   if (denom <= 1e-8f) return;
 
-  float j = -(1.f + restitution) * vn / denom;
+ const float eps = 1e-8f;
+if (std::fabs(denom) < eps) return;
+
+float j = -(1.f + restitution) * vn / denom;
 
   Vec3 impulse = n * j;
   applyImpulse(*A, impulse * -1.f, ra);
