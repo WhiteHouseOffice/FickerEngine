@@ -217,15 +217,28 @@ void Scene::render(const Mat4& view, const Mat4& proj) {
 }
 
 
+static void LoadMat4_GL(int mode, const Mat4& m) {
+#ifdef FE_NATIVE
+  float f[16];
+
+  // row-major Mat4 -> column-major OpenGL
+  f[0]  = m.m[0][0]; f[4]  = m.m[0][1]; f[8]  = m.m[0][2]; f[12] = m.m[0][3];
+  f[1]  = m.m[1][0]; f[5]  = m.m[1][1]; f[9]  = m.m[1][2]; f[13] = m.m[1][3];
+  f[2]  = m.m[2][0]; f[6]  = m.m[2][1]; f[10] = m.m[2][2]; f[14] = m.m[2][3];
+  f[3]  = m.m[3][0]; f[7]  = m.m[3][1]; f[11] = m.m[3][2]; f[15] = m.m[3][3];
+
+  glMatrixMode(mode);
+  glLoadMatrixf(f);
+#else
+  (void)mode; (void)m;
+#endif
+}
+
+
 void Scene::renderDebug(const Mat4& view, const Mat4& proj) {
 #ifdef FE_NATIVE
-  // Ensure our camera matrices are actually applied.
-  // Assumes Mat4 is compatible with OpenGL column-major layout.
-  glMatrixMode(GL_PROJECTION);
-  glLoadMatrixf(reinterpret_cast<const float*>(&proj));
-
-  glMatrixMode(GL_MODELVIEW);
-  glLoadMatrixf(reinterpret_cast<const float*>(&view));
+  LoadMat4_GL(GL_PROJECTION, proj);
+  LoadMat4_GL(GL_MODELVIEW,  view);
 
   glEnable(GL_DEPTH_TEST);
   glDisable(GL_CULL_FACE);
@@ -251,5 +264,6 @@ void Scene::renderDebug(const Mat4& view, const Mat4& proj) {
   (void)view; (void)proj;
 #endif
 }
+
 
 
