@@ -243,11 +243,20 @@ if (s_nanCooldown > 0) s_nanCooldown--;
 if (bad) {
   static bool once = false;
   if (!once) {
-    std::printf("[Scene] NaN detected -> freezing physics (fix solver)\n");
+    std::printf("[Scene] NaN detected -> skipping rigid-body physics step (player still updates)\n");
     once = true;
   }
-  return; // freeze physics instead of respawning
+
+  // IMPORTANT: keep player outputs valid so controls still work.
+  m_playerCenterOut = m_playerCenter;
+  m_playerVelOut    = m_playerVel;
+  m_playerGroundedOut = false;
+
+  // Do NOT run collidePlayerSphere against a broken rigid world.
+  // Just keep the game responsive.
+  return;
 }
+
 
   // Player collision
   m_playerCenterOut = m_playerCenter;
