@@ -219,7 +219,15 @@ void Scene::update(float dt) {
     std::printf("[Scene] dt in=%f clamped=%f fixed=%f maxDt=%f\n", inDt, dt, fixed, maxDt);
   }
 
-  m_rb.step(dt);
+  float remaining = dt;
+int steps = 0;
+while (remaining > 0.0f && steps < m_rb.maxSubsteps) {
+  const float stepDt = (remaining > m_rb.fixedDt) ? m_rb.fixedDt : remaining;
+  m_rb.step(stepDt);
+  remaining -= stepDt;
+  steps++;
+}
+
 
   // ---- BOX FAILSAFE + DIAGNOSTICS ----
   const auto& bodies = m_rb.bodies();
@@ -255,6 +263,16 @@ void Scene::update(float dt) {
   if (m_playerValid) {
     (void)m_rb.collidePlayerSphere(m_playerCenterOut, m_playerRadius, m_playerVelOut, &m_playerGroundedOut);
   }
+  static int s_posFrames = 0;
+if (s_posFrames++ < 120) { // ~2 seconds at 60fps
+  const auto& bodies = m_rb.bodies();
+  const int n = (int)bodies.size();
+  for (int i = 0; i < n && i < 3; ++i) {
+    const auto& b = bodies[i];
+    std::printf("[Scene] b%d pos=(%f,%f,%f)\n", i, b.position.x, b.position.y, b.position.z);
+  }
+}
+
 }
 
 void Scene::render(const Mat4& view, const Mat4& proj) {
