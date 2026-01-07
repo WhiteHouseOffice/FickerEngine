@@ -4,13 +4,8 @@
 #include <vector>
 #include <cstdio>
 
-// NOTE:
-// This file is intentionally defensive. When contact generation produces a
-// degenerate normal / tiny effective mass, impulses can explode and produce
-// NaNs, which then cascade into the renderer and gameplay.
-// We clamp & validate aggressively.
-static constexpr float kWorldKillY = -50.0f;  // far below ground
-static constexpr float kRespawnY   = 10.0f;   // safe height
+// Defensive physics: prevent NaNs and also prevent "finite but insane" states
+// that make bodies disappear or stop colliding.
 
 namespace fe {
 
@@ -20,6 +15,10 @@ static inline float len2(const Vec3& v){ return dot3(v,v); }
 static inline bool finite1(float f) { return std::isfinite(f); }
 static inline bool finite3(const Vec3& v) {
   return finite1(v.x) && finite1(v.y) && finite1(v.z);
+}
+
+static inline bool finiteQuat(const Quat& q) {
+  return finite1(q.w) && finite1(q.x) && finite1(q.y) && finite1(q.z);
 }
 
 static inline Vec3 clampVec3(const Vec3& v, const Vec3& mn, const Vec3& mx) {
@@ -39,18 +38,77 @@ static inline bool safeNormalize(Vec3& v) {
 }
 
 // quatNormalize() can produce NaNs if input is near-zero length.
-// Make it safe here so physics never generates NaN orientations.
+// Make it safe so physics never generates NaN orientations.
 static inline Quat safeQuatNormalize(const Quat& q) {
   const float l2 = q.w*q.w + q.x*q.x + q.y*q.y + q.z*q.z;
   if (!finite1(l2) || l2 < 1e-20f) return Quat::identity();
   const float invL = 1.0f / std::sqrt(l2);
   Quat out{ q.w*invL, q.x*invL, q.y*invL, q.z*invL };
-  // final sanity
-  const float l2b = out.w*out.w + out.x*out.x + out.y*out.y + out.z*out.z;
-  if (!finite1(l2b) || l2b < 1e-20f) return Quat::identity();
+  if (!finiteQuat(out)) return Quat::identity();
   return out;
 }
 
+// ------------------------------------------------------------
+// "Finite but insane" guardrails
+// ------------------------------------------------------------
+static constexpr float kWorldKillY   = -50.0f;   // far below world
+static constexpr float kWorldMaxAbs  = 1000.0f;  // huge coordinate => went insane
+static constexpr float kRespawnY     = 10.0f;    // safe height
+static constexpr float kMinExtent    = 0.02f;
+static constexpr float kMaxExtent    = 100.0f;
+
+static bool extentValid(const Vec3& he) {
+  if (!finite3(he)) return false;
+  if (he.x < kMinExtent || he.y < kMinExtent || he.z < kMinExtent) return false;
+  if (he.x > kMaxExtent || he.y > kMaxExtent || he.z > kMaxExtent) return false;
+  return true;
+}
+
+static bool positionInsane(const Vec3& p) {
+  if (!finite3(p)) return true;
+  if (p.y < kWorldKillY) return true;
+  if (std::fabs(p.x) > kWorldMaxAbs) return true;
+  if (std::fabs(p.y) > kWorldMaxAbs) return true;
+  if (std::fabs(p.z) > kWorldMaxAbs) return true;
+  return false;
+}
+
+static void sanitizeBody(RigidBoxBody& b, const char* where) {
+  bool bad = false;
+
+  if (positionInsane(b.position)) bad = true;
+  if (!finite3(b.linearVelocity) || !finite3(b.angularVelocity)) bad = true;
+  if (!finiteQuat(b.orientation)) bad = true;
+  if (!extentValid(b.halfExtents)) bad = true;
+
+  if (!bad) return;
+
+  std::printf("[PhysicsWorldRB] SANITIZE (%s) id=%u pos=(%.3f %.3f %.3f) vel=(%.3f %.3f %.3f) he=(%.3f %.3f %.3f) quat=(%.3f %.3f %.3f %.3f)\n",
+    where, (unsigned)b.id,
+    b.position.x, b.position.y, b.position.z,
+    b.linearVelocity.x, b.linearVelocity.y, b.linearVelocity.z,
+    b.halfExtents.x, b.halfExtents.y, b.halfExtents.z,
+    b.orientation.w, b.orientation.x, b.orientation.y, b.orientation.z
+  );
+
+  // Reset to safe state (NO deletion).
+  b.position = Vec3(0.0f, kRespawnY, 0.0f);
+  b.linearVelocity = Vec3(0,0,0);
+  b.angularVelocity = Vec3(0,0,0);
+  b.orientation = Quat::identity();
+
+  // Keep original extents if at least finite-ish; otherwise set a sane default.
+  if (!extentValid(b.halfExtents)) {
+    b.halfExtents = Vec3(0.5f, 0.5f, 0.5f);
+  }
+
+  b.asleep = true;
+  b.sleepTimer = b.sleepTime;
+}
+
+// ------------------------------------------------------------
+// Core API
+// ------------------------------------------------------------
 uint32_t PhysicsWorldRB::createBox(const Vec3& pos, const Vec3& halfExtents, float mass) {
   RigidBoxBody b;
   b.id = m_nextId++;
@@ -65,6 +123,10 @@ uint32_t PhysicsWorldRB::createBox(const Vec3& pos, const Vec3& halfExtents, flo
     b.invMass = 0.f;
     b.invInertiaLocal = Mat3{};
   }
+
+  // ensure sane extents
+  if (!extentValid(b.halfExtents)) b.halfExtents = Vec3(0.5f,0.5f,0.5f);
+
   m_bodies.push_back(b);
   return b.id;
 }
@@ -81,7 +143,6 @@ void PhysicsWorldRB::clearDynamics() {
 }
 
 Mat3 PhysicsWorldRB::invInertiaWorld(const RigidBoxBody& b) const {
-  // R * I^-1_local * R^T
   const Quat qn = safeQuatNormalize(b.orientation);
   const Mat3 R = quatToMat3(qn);
   const Mat3 Rt = mat3Transpose(R);
@@ -90,13 +151,14 @@ Mat3 PhysicsWorldRB::invInertiaWorld(const RigidBoxBody& b) const {
 
 void PhysicsWorldRB::applyImpulse(RigidBoxBody& b, const Vec3& impulse, const Vec3& r) {
   if (!b.isDynamic()) return;
+
   b.linearVelocity = b.linearVelocity + impulse * b.invMass;
 
   const Mat3 invIw = invInertiaWorld(b);
   const Vec3 dw = mat3Mul(invIw, cross(r, impulse));
   b.angularVelocity = b.angularVelocity + dw;
 
-  // Hard safety: if something went non-finite, kill motion so we don't cascade NaNs.
+  // If something went non-finite, freeze motion; don't delete.
   if (!finite3(b.linearVelocity) || !finite3(b.angularVelocity)) {
     b.linearVelocity = Vec3(0,0,0);
     b.angularVelocity = Vec3(0,0,0);
@@ -106,10 +168,8 @@ void PhysicsWorldRB::applyImpulse(RigidBoxBody& b, const Vec3& impulse, const Ve
 }
 
 void PhysicsWorldRB::integrateOrientation(RigidBoxBody& b, float h) {
-  // q' = 0.5 * omegaQuat * q
   Quat q = safeQuatNormalize(b.orientation);
   const Vec3 w = b.angularVelocity;
-
   if (!finite3(w)) {
     b.angularVelocity = Vec3(0,0,0);
     b.asleep = true;
@@ -148,26 +208,9 @@ void PhysicsWorldRB::integrate(RigidBoxBody& b, float h) {
   b.position = b.position + b.linearVelocity * h;
   integrateOrientation(b, h);
   applyDamping(b, h);
-  // If a body falls far below the world, it likely tunneled through contact.
-// Snap it back instead of letting it disappear forever.
-if (finite3(b.position) && b.position.y < kWorldKillY) {
-  b.position.y = kRespawnY;
-  b.linearVelocity = Vec3(0,0,0);
-  b.angularVelocity = Vec3(0,0,0);
-  b.orientation = Quat::identity();
-  b.asleep = true;
-  b.sleepTimer = b.sleepTime;
-  return;
-}
-  // If integration creates non-finite state, freeze the body safely.
-  if (!finite3(b.position) || !finite3(b.linearVelocity) || !finite3(b.angularVelocity)) {
-    b.position = Vec3(0,10,0);
-    b.orientation = Quat::identity();
-    b.linearVelocity = Vec3(0,0,0);
-    b.angularVelocity = Vec3(0,0,0);
-    b.asleep = true;
-    b.sleepTimer = b.sleepTime;
-  }
+
+  // sanitize right after integration
+  sanitizeBody(b, "integrate");
 }
 
 static void computeOBBAxes(const RigidBoxBody& b, Vec3& ax, Vec3& ay, Vec3& az) {
@@ -225,8 +268,7 @@ static bool satOBBOBB(const RigidBoxBody& A, const RigidBoxBody& B, Vec3& outN, 
     Vec3 a = axes[i];
     float l2 = len2(a);
     if (!finite1(l2) || l2 < 1e-10f) continue;
-    float invL = 1.f / std::sqrt(l2);
-    a = a * invL;
+    a = a * (1.f / std::sqrt(l2));
 
     float ra = projectRadius(A, a);
     float rb = projectRadius(B, a);
@@ -236,13 +278,11 @@ static bool satOBBOBB(const RigidBoxBody& A, const RigidBoxBody& B, Vec3& outN, 
 
     if (pen < bestPen) {
       bestPen = pen;
-      // make axis point from A to B
       bestAxis = (dot3(d, a) < 0.f) ? (a * -1.f) : a;
     }
   }
 
   if (!finite3(bestAxis) || !finite1(bestPen)) return false;
-
   outN = bestAxis;
   outPen = bestPen;
   return true;
@@ -251,9 +291,7 @@ static bool satOBBOBB(const RigidBoxBody& A, const RigidBoxBody& B, Vec3& outN, 
 void PhysicsWorldRB::contactsBoxBox(const RigidBoxBody& A, const RigidBoxBody& B, std::vector<Contact>& out) {
   Vec3 n; float pen;
   if (!satOBBOBB(A,B,n,pen)) return;
-  if (!finite3(n) || !finite1(pen)) return;
 
-  // Collect contact points by vertex inclusion (gives multiple points for face contacts)
   std::vector<Vec3> pts;
   pts.reserve(16);
 
@@ -267,17 +305,14 @@ void PhysicsWorldRB::contactsBoxBox(const RigidBoxBody& A, const RigidBoxBody& B
     if (pointInOBB(v,A)) pts.push_back(v);
   }
 
-  // Fallback: single point midway between centers projected along normal
   if (pts.empty()) {
     Vec3 p = (A.position + B.position) * 0.5f - n * (pen * 0.5f);
     pts.push_back(p);
   }
 
-  // Reduce to at most 4 points (fast)
   if (pts.size() > 4) pts.resize(4);
 
   for (auto& p : pts) {
-    if (!finite3(p)) continue;
     Contact c;
     c.a = A.id;
     c.b = B.id;
@@ -289,7 +324,6 @@ void PhysicsWorldRB::contactsBoxBox(const RigidBoxBody& A, const RigidBoxBody& B
 }
 
 void PhysicsWorldRB::contactsBoxGround(const RigidBoxBody& A, std::vector<Contact>& out) {
-  // Emit multiple bottom contacts for stability.
   float minY = 1e30f;
   Vec3 verts[8];
   int idx = 0;
@@ -301,14 +335,12 @@ void PhysicsWorldRB::contactsBoxGround(const RigidBoxBody& A, std::vector<Contac
     if (v.y < minY) minY = v.y;
   }
 
-  if (!finite1(minY)) return;
   if (minY >= groundY) return;
 
   const float eps = 0.01f;
   int emitted = 0;
   for (int i=0; i<8 && emitted < 4; ++i) {
     const Vec3& v = verts[i];
-    if (!finite3(v)) continue;
     if (v.y <= minY + eps) {
       Contact c;
       c.a = A.id;
@@ -316,10 +348,8 @@ void PhysicsWorldRB::contactsBoxGround(const RigidBoxBody& A, std::vector<Contac
       c.point = v;
       c.normal = Vec3(0,1,0);
       c.penetration = (groundY - v.y);
-      if (finite1(c.penetration) && c.penetration > 0.f) {
-        out.push_back(c);
-        emitted++;
-      }
+      out.push_back(c);
+      emitted++;
     }
   }
 
@@ -329,25 +359,18 @@ void PhysicsWorldRB::contactsBoxGround(const RigidBoxBody& A, std::vector<Contac
     c.point = A.position;
     c.normal = Vec3(0,1,0);
     c.penetration = (groundY - minY);
-    if (finite1(c.penetration) && c.penetration > 0.f && finite3(c.point)) {
-      out.push_back(c);
-    }
+    out.push_back(c);
   }
 }
 
 void PhysicsWorldRB::contactsBoxStaticAABB(const RigidBoxBody& A, const AABB& S, std::vector<Contact>& out) {
-  // Approximate OBB vs AABB via sampling vertices against AABB
   const int s[2]={-1,1};
   for (int ix: s) for (int iy: s) for (int iz: s) {
     Vec3 v = obbVertex(A, ix,iy,iz);
-    if (!finite3(v)) continue;
     Vec3 cl = clampVec3(v, S.min, S.max);
     Vec3 d = v - cl;
     float d2 = len2(d);
-    if (!finite1(d2)) continue;
-
     if (d2 <= 1e-10f) {
-      // Vertex is inside AABB => push out along nearest face.
       const float dxMin = v.x - S.min.x;
       const float dxMax = S.max.x - v.x;
       const float dyMin = v.y - S.min.y;
@@ -355,32 +378,24 @@ void PhysicsWorldRB::contactsBoxStaticAABB(const RigidBoxBody& A, const AABB& S,
       const float dzMin = v.z - S.min.z;
       const float dzMax = S.max.z - v.z;
 
-      if (!finite1(dxMin)||!finite1(dxMax)||!finite1(dyMin)||!finite1(dyMax)||!finite1(dzMin)||!finite1(dzMax)) continue;
-
       Vec3 n(0,1,0);
       float pen = dyMax;
 
-      // Start with best Y face (top vs bottom)
       if (dyMin < dyMax) { pen = dyMin; n = Vec3(0,-1,0); }
       else               { pen = dyMax; n = Vec3(0, 1,0); }
 
-      // X faces
       float px = (dxMin < dxMax) ? dxMin : dxMax;
       if (px < pen) {
         pen = px;
         n = (dxMin < dxMax) ? Vec3(-1,0,0) : Vec3(1,0,0);
       }
 
-      // Z faces
       float pz = (dzMin < dzMax) ? dzMin : dzMax;
       if (pz < pen) {
         pen = pz;
         n = (dzMin < dzMax) ? Vec3(0,0,-1) : Vec3(0,0,1);
       }
 
-      if (!finite1(pen) || pen <= 0.f || !finite3(n)) continue;
-
-      // Small bias to favor top support contacts near the top surface.
       if (n.y > 0.5f && v.y > S.max.y - 0.05f) {
         pen = std::max(0.0f, pen - 0.005f);
       }
@@ -441,14 +456,10 @@ void PhysicsWorldRB::solveVelocity(const Contact& c) {
     invIBw = invInertiaWorld(*B);
   }
 
-  if (!finite3(va) || !finite3(vb)) return;
-
   Vec3 rv = va - vb;
   float vn = dot3(rv, n);
-  if (!finite1(vn)) return;
-  if (vn > 0.f) return; // separating
+  if (vn > 0.f) return;
 
-  // effective mass along normal
   Mat3 invIAw = invInertiaWorld(*A);
   Vec3 raXn = cross(ra, n);
   Vec3 termA = mat3Mul(invIAw, raXn);
@@ -464,12 +475,10 @@ void PhysicsWorldRB::solveVelocity(const Contact& c) {
   float denom = kA + kB;
   if (!finite1(denom) || denom <= 1e-8f) return;
 
-  // Stabilize resting contacts: near-zero impact speed should not bounce.
   const float e = (std::fabs(vn) < 1.0f) ? 0.0f : restitution;
   float j = -(1.f + e) * vn / denom;
-
-  // Clamp to prevent impulse explosions when effective mass is tiny.
   if (!finite1(j)) return;
+
   const float maxJ = 200.0f;
   if (j > maxJ) j = maxJ;
 
@@ -477,13 +486,11 @@ void PhysicsWorldRB::solveVelocity(const Contact& c) {
   applyImpulse(*A, impulse * -1.f, ra);
   if (B) applyImpulse(*B, impulse, rb);
 
-  // friction (Coulomb)
+  // friction
   rv = (A->linearVelocity + cross(A->angularVelocity, ra)) - (B ? (B->linearVelocity + cross(B->angularVelocity, rb)) : Vec3(0,0,0));
-  if (!finite3(rv)) return;
-
   Vec3 t = rv - n * dot3(rv, n);
   float t2 = len2(t);
-  if (finite1(t2) && t2 > 1e-10f) {
+  if (t2 > 1e-10f) {
     t = t * (1.f / std::sqrt(t2));
 
     Vec3 raXt = cross(ra, t);
@@ -498,10 +505,8 @@ void PhysicsWorldRB::solveVelocity(const Contact& c) {
     }
 
     float denomT = ktA + ktB;
-    if (finite1(denomT) && denomT > 1e-8f) {
+    if (denomT > 1e-8f) {
       float jt = -dot3(rv, t) / denomT;
-      if (!finite1(jt)) return;
-
       float maxF = friction * j;
       if (jt >  maxF) jt =  maxF;
       if (jt < -maxF) jt = -maxF;
@@ -512,7 +517,6 @@ void PhysicsWorldRB::solveVelocity(const Contact& c) {
     }
   }
 
-  // wake on contact
   A->asleep = false;
   A->sleepTimer = 0.f;
   if (B) { B->asleep=false; B->sleepTimer=0.f; }
@@ -523,11 +527,10 @@ void PhysicsWorldRB::solvePosition(const Contact& c) {
   if (!A) return;
   RigidBoxBody* B = (c.b != 0) ? get(c.b) : nullptr;
 
-  // Gentler positional correction reduces jitter and "launch" artifacts.
   const float slop = 0.01f;
   const float percent = 0.2f;
   float pen = std::max(0.f, c.penetration - slop);
-  if (!finite1(pen) || pen <= 0.f) return;
+  if (pen <= 0.f) return;
 
   Vec3 n = c.normal;
   if (!safeNormalize(n)) return;
@@ -535,37 +538,22 @@ void PhysicsWorldRB::solvePosition(const Contact& c) {
   float wA = A->invMass;
   float wB = B ? B->invMass : 0.f;
   float wSum = wA + wB;
-  if (!finite1(wSum) || wSum <= 0.f) return;
+  if (wSum <= 0.f) return;
 
   Vec3 corr = n * (percent * pen / wSum);
-  if (!finite3(corr)) return;
 
-  // Clamp correction magnitude (prevents teleporting from deep penetration)
   const float maxCorr = 0.2f;
   const float c2 = len2(corr);
-  if (finite1(c2) && c2 > maxCorr * maxCorr) {
+  if (c2 > maxCorr * maxCorr) {
     corr = corr * (maxCorr / std::sqrt(c2));
   }
 
   if (A->isDynamic()) A->position = A->position - corr * wA;
   if (B && B->isDynamic()) B->position = B->position + corr * wB;
 
-  if (!finite3(A->position)) {
-    A->position = Vec3(0,10,0);
-    A->orientation = Quat::identity();
-    A->linearVelocity = Vec3(0,0,0);
-    A->angularVelocity = Vec3(0,0,0);
-    A->asleep = true;
-    A->sleepTimer = A->sleepTime;
-  }
-  if (B && !finite3(B->position)) {
-    B->position = Vec3(0,10,0);
-    B->orientation = Quat::identity();
-    B->linearVelocity = Vec3(0,0,0);
-    B->angularVelocity = Vec3(0,0,0);
-    B->asleep = true;
-    B->sleepTimer = B->sleepTime;
-  }
+  // sanitize immediately after correction (this is where "finite but insane" often happens)
+  sanitizeBody(*A, "solvePosition:A");
+  if (B) sanitizeBody(*B, "solvePosition:B");
 }
 
 void PhysicsWorldRB::updateSleeping(RigidBoxBody& b, float h) {
@@ -573,14 +561,6 @@ void PhysicsWorldRB::updateSleeping(RigidBoxBody& b, float h) {
 
   const float v2 = len2(b.linearVelocity);
   const float w2 = len2(b.angularVelocity);
-
-  if (!finite1(v2) || !finite1(w2)) {
-    b.linearVelocity = Vec3(0,0,0);
-    b.angularVelocity = Vec3(0,0,0);
-    b.asleep = true;
-    b.sleepTimer = b.sleepTime;
-    return;
-  }
 
   if (v2 < b.sleepVel*b.sleepVel && w2 < b.sleepAngVel*b.sleepAngVel) {
     b.sleepTimer += h;
@@ -599,7 +579,6 @@ bool PhysicsWorldRB::collidePlayerSphere(Vec3& center, float radius, Vec3& playe
   bool hit = false;
   bool grounded = false;
 
-  // collide vs dynamic boxes: sphere vs OBB (closest point in OBB)
   for (auto& b : m_bodies) {
     if (!b.isDynamic()) continue;
 
@@ -607,34 +586,33 @@ bool PhysicsWorldRB::collidePlayerSphere(Vec3& center, float radius, Vec3& playe
     const Mat3 R = quatToMat3(qn);
     const Mat3 Rt = mat3Transpose(R);
 
-    // sphere center in box local
     Vec3 d = center - b.position;
     Vec3 local = mat3Mul(Rt, d);
 
-    Vec3 cl = clampVec3(local, Vec3(-b.halfExtents.x, -b.halfExtents.y, -b.halfExtents.z),
-                               Vec3( b.halfExtents.x,  b.halfExtents.y,  b.halfExtents.z));
+    Vec3 cl = clampVec3(local,
+                        Vec3(-b.halfExtents.x, -b.halfExtents.y, -b.halfExtents.z),
+                        Vec3( b.halfExtents.x,  b.halfExtents.y,  b.halfExtents.z));
     Vec3 closest = mat3Mul(R, cl) + b.position;
     Vec3 delta = center - closest;
     float d2 = len2(delta);
+
     if (d2 < radius*radius && d2 > 1e-10f) {
       float dist = std::sqrt(d2);
       Vec3 n = delta * (1.f/dist);
       float pen = radius - dist;
 
-      if (!finite3(n) || !finite1(pen)) continue;
-
-      // move player out
       center = center + n * pen;
-      // remove velocity into normal
+
       float vn = dot3(playerVel, n);
       if (vn < 0.f) playerVel = playerVel - n * vn;
 
-      // Push box, but only horizontally to avoid "rocket" vertical energy injection.
       Vec3 nh(n.x, 0.0f, n.z);
-      if (safeNormalize(nh)) {
+      float nh2 = len2(nh);
+      if (nh2 > 1e-8f) {
+        nh = nh * (1.0f / std::sqrt(nh2));
         float vnh = dot3(playerVel, nh);
         if (vnh < 0.f) {
-          float push = 6.0f; // tune
+          float push = 6.0f;
           b.linearVelocity = b.linearVelocity + (nh * (-push * vnh)) * b.invMass;
         }
       }
@@ -646,15 +624,11 @@ bool PhysicsWorldRB::collidePlayerSphere(Vec3& center, float radius, Vec3& playe
     }
   }
 
-  // collide vs static AABBs
   for (const auto& s : m_static) {
     Vec3 cl = clampVec3(center, s.min, s.max);
     Vec3 d = center - cl;
     float d2 = len2(d);
-    if (!finite1(d2)) continue;
-
     if (d2 < radius*radius) {
-      // push out along best axis
       float px = std::min(center.x - s.min.x, s.max.x - center.x);
       float py = std::min(center.y - s.min.y, s.max.y - center.y);
       float pz = std::min(center.z - s.min.z, s.max.z - center.z);
@@ -663,8 +637,6 @@ bool PhysicsWorldRB::collidePlayerSphere(Vec3& center, float radius, Vec3& playe
       float pen = py;
       if (px < pen) { pen=px; n = (center.x < (s.min.x+s.max.x)*0.5f) ? Vec3(-1,0,0) : Vec3(1,0,0); }
       if (pz < pen) { pen=pz; n = (center.z < (s.min.z+s.max.z)*0.5f) ? Vec3(0,0,-1) : Vec3(0,0,1); }
-
-      if (!finite1(pen) || !finite3(n)) continue;
 
       center = center + n * pen;
       float vn = dot3(playerVel, n);
@@ -695,69 +667,27 @@ void PhysicsWorldRB::substep(float h) {
   std::vector<Contact> contacts;
   gatherContacts(contacts);
 
-  // Solve velocities
   for (int it=0; it<velocityIters; ++it) {
     for (const auto& c : contacts) solveVelocity(c);
   }
 
-  // Positional correction
   for (int it=0; it<positionIters; ++it) {
     for (const auto& c : contacts) solvePosition(c);
   }
 
-  for (auto& b : m_bodies) updateSleeping(b, h);
-}
-
-static inline bool bodyFinite(const RigidBoxBody& b) {
-  if (!finite3(b.position)) return false;
-  if (!finite3(b.linearVelocity)) return false;
-  if (!finite3(b.angularVelocity)) return false;
-  const float q2 = b.orientation.w*b.orientation.w + b.orientation.x*b.orientation.x + b.orientation.y*b.orientation.y + b.orientation.z*b.orientation.z;
-  if (!finite1(q2) || q2 < 1e-20f) return false;
-  return true;
+  for (auto& b : m_bodies) {
+    updateSleeping(b, h);
+    // final sanitize after everything
+    sanitizeBody(b, "substep:end");
+  }
 }
 
 void PhysicsWorldRB::step(float dt) {
   if (dt <= 0.f) return;
   m_accum += dt;
-
   int steps=0;
   while (m_accum >= fixedDt && steps < maxSubsteps) {
-    // Snapshot state so we can roll back if *anything* goes non-finite during this substep.
-    std::vector<Vec3> prevPos(m_bodies.size());
-    std::vector<Quat> prevOri(m_bodies.size());
-    std::vector<Vec3> prevLin(m_bodies.size());
-    std::vector<Vec3> prevAng(m_bodies.size());
-    for (size_t i=0;i<m_bodies.size();++i) {
-      prevPos[i] = m_bodies[i].position;
-      prevOri[i] = m_bodies[i].orientation;
-      prevLin[i] = m_bodies[i].linearVelocity;
-      prevAng[i] = m_bodies[i].angularVelocity;
-    }
-
     substep(fixedDt);
-
-    bool bad = false;
-    for (size_t i=0;i<m_bodies.size();++i) {
-      if (!bodyFinite(m_bodies[i])) { bad = true; break; }
-    }
-
-    if (bad) {
-      std::printf("[PhysicsWorldRB] Non-finite detected -> rollback+freeze (NOT deleting bodies)\n");
-      for (size_t i=0;i<m_bodies.size();++i) {
-        auto& b = m_bodies[i];
-        b.position = prevPos[i];
-        b.orientation = safeQuatNormalize(prevOri[i]);
-        b.linearVelocity = Vec3(0,0,0);
-        b.angularVelocity = Vec3(0,0,0);
-        b.asleep = true;
-        b.sleepTimer = b.sleepTime;
-      }
-      // Drop remaining accumulated time so we don't immediately re-trigger.
-      m_accum = 0.f;
-      return;
-    }
-
     m_accum -= fixedDt;
     steps++;
   }
