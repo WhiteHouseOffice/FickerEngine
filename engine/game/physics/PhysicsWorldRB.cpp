@@ -9,6 +9,8 @@
 // degenerate normal / tiny effective mass, impulses can explode and produce
 // NaNs, which then cascade into the renderer and gameplay.
 // We clamp & validate aggressively.
+static constexpr float kWorldKillY = -50.0f;  // far below ground
+static constexpr float kRespawnY   = 10.0f;   // safe height
 
 namespace fe {
 
@@ -146,7 +148,17 @@ void PhysicsWorldRB::integrate(RigidBoxBody& b, float h) {
   b.position = b.position + b.linearVelocity * h;
   integrateOrientation(b, h);
   applyDamping(b, h);
-
+  // If a body falls far below the world, it likely tunneled through contact.
+// Snap it back instead of letting it disappear forever.
+if (finite3(b.position) && b.position.y < kWorldKillY) {
+  b.position.y = kRespawnY;
+  b.linearVelocity = Vec3(0,0,0);
+  b.angularVelocity = Vec3(0,0,0);
+  b.orientation = Quat::identity();
+  b.asleep = true;
+  b.sleepTimer = b.sleepTime;
+  return;
+}
   // If integration creates non-finite state, freeze the body safely.
   if (!finite3(b.position) || !finite3(b.linearVelocity) || !finite3(b.angularVelocity)) {
     b.position = Vec3(0,10,0);
