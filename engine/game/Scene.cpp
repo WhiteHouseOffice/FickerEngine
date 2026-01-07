@@ -240,20 +240,15 @@ for (int i = 0; i < (int)bodies.size() && i < 3; ++i) {
 
 if (s_nanCooldown > 0) s_nanCooldown--;
 
-if (bad && s_nanCooldown == 0) {
-  std::printf("[Scene] NaN detected -> respawn crates\n");
-
-  // IMPORTANT: reset accumulator so we don't instantly replay a big backlog of steps
-  s_accum = 0.0f;
-
-  SpawnCrates(m_rb);
-
-  // Cooldown ~1 second at 60fps (prevents print spam + respawn loop)
-  s_nanCooldown = 60;
-
-  // Skip the rest of the update this frame
-  return;
+if (bad) {
+  static bool once = false;
+  if (!once) {
+    std::printf("[Scene] NaN detected -> freezing physics (fix solver)\n");
+    once = true;
+  }
+  return; // freeze physics instead of respawning
 }
+
   // Player collision
   m_playerCenterOut = m_playerCenter;
   m_playerVelOut = m_playerVel;
