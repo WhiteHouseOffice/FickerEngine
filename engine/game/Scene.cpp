@@ -134,7 +134,7 @@ void Scene::rebuildStaticAABBs() {
 }
 
 void Scene::init() {
-  // ---- Static world platforms (must match Game::init platform AABBs) ----
+  // ---- Static world platforms ----
   {
     auto* p = createObject();
     p->position = Vec3(0.0f, 0.65f, 0.0f);
@@ -164,7 +164,7 @@ void Scene::init() {
   m_rb.velocityIters = 12;
   m_rb.positionIters = 4;
 
-  // ---- Spawn dynamic crates (stacked) ----
+  // ---- Spawn crates ----
   m_rb.createBox(Vec3(0.0f, 1.30f, 0.0f), Vec3(0.50f, 0.50f, 0.50f), 2.0f);
   m_rb.createBox(Vec3(0.0f, 2.35f, 0.0f), Vec3(0.50f, 0.50f, 0.50f), 2.0f);
   m_rb.createBox(Vec3(3.75f, 2.10f, 0.0f), Vec3(0.50f, 0.50f, 0.50f), 2.0f);
@@ -186,7 +186,6 @@ bool Scene::getPlayerSphere(Vec3& outCenter, Vec3& outVelocity, bool& outGrounde
 }
 
 void Scene::update(float dt) {
-  // ---- dt confirmation (prints first 60 frames only) ----
   static int s_frames = 0;
 
   for (auto& obj : m_objects) {
@@ -208,7 +207,6 @@ void Scene::update(float dt) {
   }
   s_frames++;
 
-  // IMPORTANT: minimal, no double-step risk
   m_rb.step(dt);
 
   m_playerCenterOut = m_playerCenter;
@@ -227,10 +225,36 @@ void Scene::render(const Mat4& view, const Mat4& proj) {
 static void LoadMat4_GL(int mode, const Mat4& M) {
 #ifdef FE_NATIVE
   glMatrixMode(mode);
-  // Try transpose first: many engine Mat4s are row-major in memory.
-  glLoadTransposeMatrixf(M.m);
+  glLoadMatrixf(M.m); // back to the non-transpose path that at least drew something
 #else
   (void)mode; (void)M;
+#endif
+}
+
+static void DrawOverlayCross2D() {
+#ifdef FE_NATIVE
+  // Draw a small cross in screen space so we know rendering is alive even if world matrices are wrong.
+  glMatrixMode(GL_PROJECTION);
+  glPushMatrix();
+  glLoadIdentity();
+  glOrtho(-1, 1, -1, 1, -1, 1);
+
+  glMatrixMode(GL_MODELVIEW);
+  glPushMatrix();
+  glLoadIdentity();
+
+  glDisable(GL_DEPTH_TEST);
+  glBegin(GL_LINES);
+  glVertex3f(-0.05f, 0.0f, 0.0f); glVertex3f(0.05f, 0.0f, 0.0f);
+  glVertex3f(0.0f, -0.05f, 0.0f); glVertex3f(0.0f, 0.05f, 0.0f);
+  glEnd();
+  glEnable(GL_DEPTH_TEST);
+
+  glPopMatrix(); // MODELVIEW
+  glMatrixMode(GL_PROJECTION);
+  glPopMatrix(); // PROJECTION
+
+  glMatrixMode(GL_MODELVIEW);
 #endif
 }
 
@@ -242,14 +266,21 @@ void Scene::renderDebug(const Mat4& view, const Mat4& proj) {
   glEnable(GL_DEPTH_TEST);
   glDisable(GL_CULL_FACE);
 
+  // Overlay (always visible if GL is alive)
+  glColor3f(1.f, 0.f, 1.f);
+  DrawOverlayCross2D();
+
+  // Grid
   glColor3f(0.6f, 0.6f, 0.6f);
   DrawGrid(20.0f, 1.0f);
 
+  // Static platforms
   glColor3f(0.2f, 0.9f, 0.2f);
   for (const auto& a : m_static) {
     DrawAABB(a.min, a.max);
   }
 
+  // Dynamic crates
   glColor3f(0.9f, 0.7f, 0.2f);
   for (const auto& b : m_rb.bodies()) {
     DrawOBB(b);
