@@ -281,7 +281,12 @@ void Scene::update(float dt) {
     s_accum -= fixed;
     steps++;
   }
-
+  if ((s_print % 60) == 0 && !m_rb.bodies().empty()) {
+  const auto& b0 = m_rb.bodies()[0];
+  std::printf("[RB] b0 pos=(%.2f %.2f %.2f) vel=(%.2f %.2f %.2f)\n",
+    b0.position.x, b0.position.y, b0.position.z,
+    b0.linearVelocity.x, b0.linearVelocity.y, b0.linearVelocity.z);
+}
   // Extended non-finite detection: check orientation too (catch invisible "despawn")
   static int s_nanCooldown = 0; // frames
   const auto& bodies = m_rb.bodies();
