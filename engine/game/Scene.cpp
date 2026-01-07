@@ -208,6 +208,7 @@ void Scene::update(float dt) {
   }
   s_frames++;
 
+  // IMPORTANT: minimal, no double-step risk
   m_rb.step(dt);
 
   m_playerCenterOut = m_playerCenter;
@@ -226,7 +227,8 @@ void Scene::render(const Mat4& view, const Mat4& proj) {
 static void LoadMat4_GL(int mode, const Mat4& M) {
 #ifdef FE_NATIVE
   glMatrixMode(mode);
-  glLoadMatrixf(M.m); // engine matrix path (we'll fix transpose later if needed)
+  // Try transpose first: many engine Mat4s are row-major in memory.
+  glLoadTransposeMatrixf(M.m);
 #else
   (void)mode; (void)M;
 #endif
@@ -234,28 +236,8 @@ static void LoadMat4_GL(int mode, const Mat4& M) {
 
 void Scene::renderDebug(const Mat4& view, const Mat4& proj) {
 #ifdef FE_NATIVE
-  // ---- TEMP TEST CAMERA (NO GLU) ----
-  // This isolates whether the engine's view/proj matrices are the problem.
-  glMatrixMode(GL_PROJECTION);
-  glLoadIdentity();
-
-  const float nearZ  = 0.01f;
-  const float farZ   = 200.0f;
-  const float fovY   = 70.0f * 3.1415926f / 180.0f;
-  const float aspect = 16.0f / 9.0f;
-
-  const float top = std::tanf(fovY * 0.5f) * nearZ;
-  const float right = top * aspect;
-
-  glFrustum(-right, right, -top, top, nearZ, farZ);
-
-  glMatrixMode(GL_MODELVIEW);
-  glLoadIdentity();
-  glTranslatef(0.f, -1.0f, -8.0f);
-
-  // If you want to switch back to engine matrices later, use:
-  // LoadMat4_GL(GL_PROJECTION, proj);
-  // LoadMat4_GL(GL_MODELVIEW,  view);
+  LoadMat4_GL(GL_PROJECTION, proj);
+  LoadMat4_GL(GL_MODELVIEW,  view);
 
   glEnable(GL_DEPTH_TEST);
   glDisable(GL_CULL_FACE);
