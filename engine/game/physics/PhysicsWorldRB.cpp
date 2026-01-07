@@ -10,10 +10,11 @@ static inline float len2(const Vec3& v){ return dot3(v,v); }
 static inline Vec3 clampVec3(const Vec3& v, const Vec3& mn, const Vec3& mx) {
   return Vec3(
     (v.x < mn.x) ? mn.x : (v.x > mx.x ? mx.x : v.x),
-    (v.y < mn.y) ? mn.y : (v.y > mx.y ? mx.x : v.y),
+    (v.y < mn.y) ? mn.y : (v.y > mx.y ? mx.y : v.y), // FIXED: mx.y
     (v.z < mn.z) ? mn.z : (v.z > mx.z ? mx.z : v.z)
   );
 }
+
 
 uint32_t PhysicsWorldRB::createBox(const Vec3& pos, const Vec3& halfExtents, float mass) {
   RigidBoxBody b;
