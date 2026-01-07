@@ -189,6 +189,11 @@ bool Scene::getPlayerSphere(Vec3& outCenter, Vec3& outVelocity, bool& outGrounde
 }
 
 void Scene::update(float dt) {
+  // Defensive clamp: prevents first-frame / stall dt spikes from tunneling
+  // dynamic bodies through static colliders in one step.
+  if (dt < 0.0f) dt = 0.0f;
+  if (dt > (1.0f / 30.0f)) dt = (1.0f / 30.0f); // max 33ms per frame
+
   // Gameplay update (static objects)
   for (auto& obj : m_objects) {
     if (obj) obj->update(dt);
