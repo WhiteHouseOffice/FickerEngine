@@ -45,7 +45,8 @@ public:
   bool collidePlayerSphere(Vec3& center, float radius, Vec3& playerVel, bool* outGrounded);
 
   void step(float dt);
-
+  
+  std::vector<RigidBoxBody>& bodiesMutable() { return m_bodies; }
   const std::vector<RigidBoxBody>& bodies() const { return m_bodies; }
 
 private:

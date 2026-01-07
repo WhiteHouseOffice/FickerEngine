@@ -196,7 +196,7 @@ void Scene::update(float dt) {
     m_rb.step(m_rb.fixedDt);
 
     // terrain floor constraint
-    for (auto& b : m_rb.bodies()) {
+    for (auto& b : m_rb.bodiesMutable()) {
       float floorY = TerrainHeight(b.position.x, b.position.z);
       float bottom = b.position.y - b.halfExtents.y;
       if (bottom < floorY) {
