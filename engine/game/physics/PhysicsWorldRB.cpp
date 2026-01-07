@@ -37,7 +37,6 @@ static inline Quat safeQuatNormalize(const Quat& q) {
   if (!finite1(l2) || l2 < 1e-20f) return Quat::identity();
   float inv = 1.0f / std::sqrt(l2);
   return Quat{ q.w*inv, q.x*inv, q.y*inv, q.z*inv };
-
 }
 
 // ============================================================
@@ -129,9 +128,111 @@ static Vec3 obbVertex(const RigidBoxBody& b, int sx, int sy, int sz) {
   Vec3 ax, ay, az;
   computeOBBAxes(b, ax, ay, az);
   return b.position
-    + ax * (b.halfExtents.x * sx)
-    + ay * (b.halfExtents.y * sy)
-    + az * (b.halfExtents.z * sz);
+    + ax * (b.halfExtents.x * (float)sx)
+    + ay * (b.halfExtents.y * (float)sy)
+    + az * (b.halfExtents.z * (float)sz);
+}
+
+static bool pointInOBB(const Vec3& p, const RigidBoxBody& b) {
+  Vec3 ax, ay, az;
+  computeOBBAxes(b, ax, ay, az);
+  Vec3 d = p - b.position;
+  float px = dot3(d, ax);
+  float py = dot3(d, ay);
+  float pz = dot3(d, az);
+  const float eps = 1e-4f;
+  return std::fabs(px) <= b.halfExtents.x + eps
+      && std::fabs(py) <= b.halfExtents.y + eps
+      && std::fabs(pz) <= b.halfExtents.z + eps;
+}
+
+static float projectRadius(const RigidBoxBody& b, const Vec3& axis) {
+  Vec3 ax, ay, az;
+  computeOBBAxes(b, ax, ay, az);
+  return std::fabs(dot3(axis, ax)) * b.halfExtents.x
+       + std::fabs(dot3(axis, ay)) * b.halfExtents.y
+       + std::fabs(dot3(axis, az)) * b.halfExtents.z;
+}
+
+// SAT for OBB vs OBB.
+// IMPORTANT: outN points from B -> A (matches solver: A += impulse, B -= impulse)
+static bool satOBBOBB(const RigidBoxBody& A, const RigidBoxBody& B, Vec3& outN, float& outPen) {
+  Vec3 Ax, Ay, Az; computeOBBAxes(A, Ax, Ay, Az);
+  Vec3 Bx, By, Bz; computeOBBAxes(B, Bx, By, Bz);
+
+  Vec3 axes[15] = {
+    Ax,Ay,Az,
+    Bx,By,Bz,
+    cross(Ax,Bx), cross(Ax,By), cross(Ax,Bz),
+    cross(Ay,Bx), cross(Ay,By), cross(Ay,Bz),
+    cross(Az,Bx), cross(Az,By), cross(Az,Bz)
+  };
+
+  Vec3 d = B.position - A.position;
+
+  float bestPen = 1e30f;
+  Vec3 bestAxis{0,1,0};
+
+  for (int i=0; i<15; ++i) {
+    Vec3 a = axes[i];
+    float l2 = len2(a);
+    if (!finite1(l2) || l2 < 1e-10f) continue;
+    a = a * (1.f / std::sqrt(l2));
+
+    float ra = projectRadius(A, a);
+    float rb = projectRadius(B, a);
+    float dist = std::fabs(dot3(d, a));
+    float pen = (ra + rb) - dist;
+    if (pen < 0.f) return false;
+
+    if (pen < bestPen) {
+      bestPen = pen;
+
+      // a points roughly A->B when dot(d,a)>0
+      // We want B->A => flip when dot(d,a)>0
+      bestAxis = (dot3(d, a) > 0.f) ? (a * -1.f) : a;
+    }
+  }
+
+  outN = bestAxis;
+  outPen = bestPen;
+  return true;
+}
+
+void PhysicsWorldRB::contactsBoxBox(const RigidBoxBody& A, const RigidBoxBody& B, std::vector<Contact>& out) {
+  Vec3 n; float pen;
+  if (!satOBBOBB(A, B, n, pen)) return;
+
+  std::vector<Vec3> pts;
+  pts.reserve(16);
+
+  const int s[2] = {-1, 1};
+  for (int ix: s) for (int iy: s) for (int iz: s) {
+    Vec3 v = obbVertex(A, ix, iy, iz);
+    if (pointInOBB(v, B)) pts.push_back(v);
+  }
+  for (int ix: s) for (int iy: s) for (int iz: s) {
+    Vec3 v = obbVertex(B, ix, iy, iz);
+    if (pointInOBB(v, A)) pts.push_back(v);
+  }
+
+  // Fallback: one point between centers
+  if (pts.empty()) {
+    Vec3 p = (A.position + B.position) * 0.5f + n * (pen * 0.5f);
+    pts.push_back(p);
+  }
+
+  if (pts.size() > 4) pts.resize(4);
+
+  for (const Vec3& p : pts) {
+    Contact c;
+    c.a = A.id;
+    c.b = B.id;
+    c.point = p;
+    c.normal = n;        // B -> A
+    c.penetration = pen;
+    out.push_back(c);
+  }
 }
 
 // ============================================================
@@ -179,9 +280,9 @@ void PhysicsWorldRB::contactsBoxStaticAABB(const RigidBoxBody& A, const AABB& S,
   const int s[2] = {-1,1};
   for (int ix : s) for (int iy : s) for (int iz : s) {
     Vec3 v = A.position
-      + ax * (A.halfExtents.x * ix)
-      + ay * (A.halfExtents.y * iy)
-      + az * (A.halfExtents.z * iz);
+      + ax * (A.halfExtents.x * (float)ix)
+      + ay * (A.halfExtents.y * (float)iy)
+      + az * (A.halfExtents.z * (float)iz);
     verts[idx++] = v;
     minY = std::min(minY, v.y);
   }
@@ -208,11 +309,23 @@ void PhysicsWorldRB::contactsBoxStaticAABB(const RigidBoxBody& A, const AABB& S,
 
 void PhysicsWorldRB::gatherContacts(std::vector<Contact>& out) {
   out.clear();
+  out.reserve(128);
 
+  // dynamic vs ground/static
   for (auto& b : m_bodies) {
     if (!b.isDynamic() || b.asleep) continue;
     if (enableGround) contactsBoxGround(b, out);
     for (const auto& s : m_static) contactsBoxStaticAABB(b, s, out);
+  }
+
+  // dynamic vs dynamic (THIS is what was missing)
+  for (size_t i = 0; i < m_bodies.size(); ++i) {
+    for (size_t j = i + 1; j < m_bodies.size(); ++j) {
+      const auto& A = m_bodies[i];
+      const auto& B = m_bodies[j];
+      if ((!A.isDynamic() && !B.isDynamic()) || (A.asleep && B.asleep)) continue;
+      contactsBoxBox(A, B, out);
+    }
   }
 }
 
@@ -325,7 +438,6 @@ void PhysicsWorldRB::solveVelocity(const Contact& c) {
   if (B) { B->asleep = false; B->sleepTimer = 0.f; }
 }
 
-
 void PhysicsWorldRB::solvePosition(const Contact& c) {
   RigidBoxBody* A = get(c.a);
   if (!A) return;
@@ -403,7 +515,7 @@ bool PhysicsWorldRB::collidePlayerSphere(Vec3& center, float radius, Vec3& playe
     if (vn < 0.f) playerVel -= nRes * vn;
 
     // push box using INCOMING velocity
-    Vec3 nh(nRaw.x, 0, nRaw.z);
+    Vec3 nh(nRaw.x, 0.0f, nRaw.z);
     if (safeNormalize(nh)) {
       float vInto = -dot3(playerVelIn, nh);
       if (vInto > 0.f) {
