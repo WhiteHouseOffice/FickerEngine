@@ -210,12 +210,26 @@ void Scene::update(float dt) {
   }
 }
 
-void Scene::render(const Mat4& /*view*/, const Mat4& /*proj*/) {
-  // Rendering pipeline TBD (we are mostly in debug-draw mode currently)
+void Scene::render(const Mat4& view, const Mat4& proj) {
+  // For now, we render via the debug path so we always see something.
+  // Later we can move real mesh rendering back here.
+  renderDebug(view, proj);
 }
 
-void Scene::renderDebug(const Mat4& /*view*/, const Mat4& /*proj*/) {
+
+void Scene::renderDebug(const Mat4& view, const Mat4& proj) {
 #ifdef FE_NATIVE
+  // Ensure our camera matrices are actually applied.
+  // Assumes Mat4 is compatible with OpenGL column-major layout.
+  glMatrixMode(GL_PROJECTION);
+  glLoadMatrixf(reinterpret_cast<const float*>(&proj));
+
+  glMatrixMode(GL_MODELVIEW);
+  glLoadMatrixf(reinterpret_cast<const float*>(&view));
+
+  glEnable(GL_DEPTH_TEST);
+  glDisable(GL_CULL_FACE);
+
   // Grid
   glColor3f(0.6f, 0.6f, 0.6f);
   DrawGrid(20.0f, 1.0f);
@@ -233,6 +247,9 @@ void Scene::renderDebug(const Mat4& /*view*/, const Mat4& /*proj*/) {
   }
 
   glColor3f(1.f, 1.f, 1.f);
+#else
+  (void)view; (void)proj;
 #endif
 }
+
 
