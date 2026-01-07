@@ -1,5 +1,6 @@
 #include "game/Scene.h"
 #include "game/GameObject.h"
+#include <cstdio>
 
 #ifdef FE_NATIVE
   #include <GL/gl.h>

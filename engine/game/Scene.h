@@ -25,6 +25,8 @@ public:
   bool getPlayerSphere(Vec3& outCenter, Vec3& outVelocity, bool& outGrounded) const;
 
 private:
+float m_accumDt = 0.0f;
+
   std::vector<std::unique_ptr<GameObject>> m_objects;
 
   // Rigid-body physics for dynamic props (boxes)
