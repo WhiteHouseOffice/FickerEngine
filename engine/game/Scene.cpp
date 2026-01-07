@@ -231,8 +231,13 @@ void Scene::render(const Mat4& view, const Mat4& proj) {
 
 static void LoadMat4_GL(int mode, const Mat4& M) {
 #ifdef FE_NATIVE
-  glMatrixMode(mode);
-  glLoadMatrixf(M.m);   // no transpose
+glMatrixMode(GL_PROJECTION);
+glLoadIdentity();
+gluPerspective(70.0, 16.0/9.0, 0.01, 200.0); // if you don't have GLU, use glFrustum (below)
+
+glMatrixMode(GL_MODELVIEW);
+glLoadIdentity();
+glTranslatef(0.f, -1.0f, -8.0f); // pull camera back a bit
 #else
   (void)mode; (void)M;
 #endif
