@@ -1,7 +1,6 @@
 #include "game/Scene.h"
 #include "game/GameObject.h"
 
-#include "geom/ColoredQuad.h"
 #include "geom/ColoredBox.h"
 #include "geom/TerrainGrid.h"
 #include "render/RenderMesh.h"
@@ -84,13 +83,12 @@ static void DrawAABB(const Vec3& mn, const Vec3& mx) {
 }
 
 // ------------------------------------------------------------
-// Robust OBB drawing (never silently disappears)
+// Robust OBB drawing (lines)
 // ------------------------------------------------------------
 static void DrawOBB(const fe::RigidBoxBody& b) {
 #ifdef FE_NATIVE
   if (!fe_isfinite3(b.position) || !fe_isfinite3(b.halfExtents)) return;
 
-  // Orientation invalid → draw fallback AABB so box stays visible.
   if (!fe_isfiniteQuat(b.orientation)) {
     DrawAABB(b.position - b.halfExtents, b.position + b.halfExtents);
     return;
@@ -132,12 +130,6 @@ static void DrawOBB(const fe::RigidBoxBody& b) {
   Vec3 c111 = corner( 1, 1, 1);
   Vec3 c011 = corner(-1, 1, 1);
 
-  if (!fe_isfinite3(c000)||!fe_isfinite3(c100)||!fe_isfinite3(c110)||!fe_isfinite3(c010)||
-      !fe_isfinite3(c001)||!fe_isfinite3(c101)||!fe_isfinite3(c111)||!fe_isfinite3(c011)) {
-    DrawAABB(b.position - b.halfExtents, b.position + b.halfExtents);
-    return;
-  }
-
   glBegin(GL_LINES);
 
   // bottom
@@ -174,11 +166,84 @@ static void UnpackRGBA(uint32_t rgba, float& r, float& g, float& b, float& a) {
   a = float((rgba >>  0) & 0xFF) / 255.0f;
 }
 
+static fe::Quat IdentityQuat() {
+  fe::Quat q;
+  q.w = 1.0f; q.x = 0.0f; q.y = 0.0f; q.z = 0.0f;
+  return q;
+}
+
+// Generic: draw any local-space mesh (x,y,z,rgba + indices) with transform.
+template <typename LocalVertex>
+static void DrawTransformedMeshRGBA(
+  const std::vector<LocalVertex>& localVerts,
+  const std::vector<uint32_t>& localIndices,
+  const Vec3& pos,
+  const fe::Quat& rot,
+  const Vec3& scale,
+  bool backfaceCull,
+  engine::render::RenderMesh::Winding frontWinding
+) {
+#ifdef FE_NATIVE
+  using fe::Quat;
+  using fe::quatNormalize;
+  using fe::quatRotate;
+
+  Quat qn = quatNormalize(rot);
+
+  std::vector<engine::render::VertexPC> verts;
+  verts.reserve(localVerts.size());
+
+  for (const auto& v : localVerts) {
+    // LocalVertex must provide: v.x v.y v.z v.rgba
+    Vec3 pLocal(v.x * scale.x, v.y * scale.y, v.z * scale.z);
+    Vec3 pWorld = pos + quatRotate(qn, pLocal);
+
+    float r,g,b,a;
+    UnpackRGBA(v.rgba, r,g,b,a);
+    verts.push_back({ pWorld.x, pWorld.y, pWorld.z, r,g,b,a });
+  }
+
+  std::vector<uint16_t> inds;
+  inds.reserve(localIndices.size());
+  for (uint32_t i : localIndices) inds.push_back((uint16_t)i);
+
+  engine::render::RenderMesh mesh;
+  mesh.SetPrimitive(engine::render::RenderMesh::Primitive::Triangles);
+  mesh.SetBackfaceCulling(backfaceCull);
+  mesh.SetFrontFaceWinding(frontWinding);
+  mesh.SetVertices(verts);
+  mesh.SetIndices(inds);
+  mesh.Draw();
+#else
+  (void)localVerts; (void)localIndices; (void)pos; (void)rot; (void)scale; (void)backfaceCull; (void)frontWinding;
+#endif
+}
+
+// Cached unit box mesh (centered at origin, half-extents = 1)
+// We scale it per-instance by (halfExtents).
+static const engine::geom::ColoredBox& UnitColoredBoxMesh() {
+  static engine::geom::ColoredBox s_box = engine::geom::ColoredBox::make(
+    0.0f, 0.0f, 0.0f,  // center
+    1.0f, 1.0f, 1.0f,  // half extents (unit)
+    engine::geom::ColoredBox::RGBA(255,  80,  80, 255),  // +X
+    engine::geom::ColoredBox::RGBA( 80, 255,  80, 255),  // -X
+    engine::geom::ColoredBox::RGBA( 80,  80, 255, 255),  // +Y
+    engine::geom::ColoredBox::RGBA(255, 255,  80, 255),  // -Y
+    engine::geom::ColoredBox::RGBA( 80, 255, 255, 255),  // +Z
+    engine::geom::ColoredBox::RGBA(255,  80, 255, 255)   // -Z
+  );
+  return s_box;
+}
+
 static void DrawTerrain() {
 #ifdef FE_NATIVE
+  // Make it hard to miss:
+  // - larger area
+  // - slightly below 0
+  // - gentle hills
   auto t = engine::geom::TerrainGrid::make(
-    60.0f, 60.0f, 1.0f,   // sizeX, sizeZ, step
-    0.0f, 1.2f            // baseY, amplitude
+    80.0f, 80.0f, 1.0f,   // sizeX, sizeZ, step
+    -0.25f, 0.6f          // baseY, amplitude
   );
 
   std::vector<engine::render::VertexPC> verts;
@@ -195,44 +260,13 @@ static void DrawTerrain() {
 
   engine::render::RenderMesh mesh;
   mesh.SetPrimitive(engine::render::RenderMesh::Primitive::Triangles);
-  mesh.SetBackfaceCulling(true);
-  mesh.SetFrontFaceWinding(engine::render::RenderMesh::Winding::CW); // project seems flipped
-  mesh.SetVertices(verts);
-  mesh.SetIndices(inds);
-  mesh.Draw();
-#endif
-}
 
-static void DrawSolidAABBBox(const Vec3& mn, const Vec3& mx, uint32_t col) {
-#ifdef FE_NATIVE
-  const float cx = 0.5f * (mn.x + mx.x);
-  const float cy = 0.5f * (mn.y + mx.y);
-  const float cz = 0.5f * (mn.z + mx.z);
-  const float hx = 0.5f * (mx.x - mn.x);
-  const float hy = 0.5f * (mx.y - mn.y);
-  const float hz = 0.5f * (mx.z - mn.z);
+  // Double-sided for now so you can never be "under it / wrong side".
+  mesh.SetBackfaceCulling(false);
 
-  auto box = engine::geom::ColoredBox::make(
-    cx, cy, cz, hx, hy, hz,
-    col, col, col, col, col, col
-  );
-
-  std::vector<engine::render::VertexPC> verts;
-  verts.reserve(box.vertices.size());
-  for (const auto& v : box.vertices) {
-    float r,g,b,a;
-    UnpackRGBA(v.rgba, r,g,b,a);
-    verts.push_back({ v.x, v.y, v.z, r,g,b,a });
-  }
-
-  std::vector<uint16_t> inds;
-  inds.reserve(box.indices.size());
-  for (uint32_t i : box.indices) inds.push_back((uint16_t)i);
-
-  engine::render::RenderMesh mesh;
-  mesh.SetPrimitive(engine::render::RenderMesh::Primitive::Triangles);
-  mesh.SetBackfaceCulling(true);
+  // Your project currently behaves as if CW is front.
   mesh.SetFrontFaceWinding(engine::render::RenderMesh::Winding::CW);
+
   mesh.SetVertices(verts);
   mesh.SetIndices(inds);
   mesh.Draw();
@@ -326,7 +360,6 @@ bool Scene::getPlayerSphere(Vec3& outCenter, Vec3& outVelocity, bool& outGrounde
 }
 
 void Scene::update(float dt) {
-  static int s_accumFrames = 0;
   static float s_accum = 0.0f;
 
   static int s_print = 0;
@@ -364,15 +397,11 @@ void Scene::update(float dt) {
       b0.linearVelocity.x, b0.linearVelocity.y, b0.linearVelocity.z);
   }
 
-  static int s_nanCooldown = 0;
   const auto& bodies = m_rb.bodies();
-
   bool bad = false;
   for (int i = 0; i < (int)bodies.size() && i < 3; ++i) {
     if (!fe_isfiniteRigidBody(bodies[i])) { bad = true; break; }
   }
-
-  if (s_nanCooldown > 0) s_nanCooldown--;
 
   if (bad) {
     static bool once = false;
@@ -394,8 +423,6 @@ void Scene::update(float dt) {
   if (m_playerValid) {
     (void)m_rb.collidePlayerSphere(m_playerCenterOut, m_playerRadius, m_playerVelOut, &m_playerGroundedOut);
   }
-
-  s_accumFrames++;
 }
 
 void Scene::render(const Mat4& view, const Mat4& proj) {
@@ -419,29 +446,54 @@ void Scene::renderDebug(const Mat4& view, const Mat4& proj) {
   LoadMat4_GL(GL_PROJECTION, proj);
   LoadMat4_GL(GL_MODELVIEW,  view);
 
+  glDisable(GL_LIGHTING);
+  glDisable(GL_TEXTURE_2D);
   glEnable(GL_DEPTH_TEST);
-  glDisable(GL_CULL_FACE);
 
-  // 1) Terrain (triangles)
+  // --- 1) Terrain ---
   DrawTerrain();
 
-  // 2) Grid (lines)
+  // --- 2) Solid platforms (static AABBs) ---
+  {
+    const auto& unit = UnitColoredBoxMesh();
+    const uint32_t platCol = engine::geom::ColoredBox::RGBA(90, 140, 220, 255);
+
+    for (const auto& a : m_static) {
+      Vec3 center(0.5f*(a.min.x+a.max.x), 0.5f*(a.min.y+a.max.y), 0.5f*(a.min.z+a.max.z));
+      Vec3 half  (0.5f*(a.max.x-a.min.x), 0.5f*(a.max.y-a.min.y), 0.5f*(a.max.z-a.min.z));
+
+      // Use unit box colors for now; platforms are meant to read as blue.
+      // (If you want strictly single-color faces, we can generate a UnitSingleColorBox mesh too.)
+      (void)platCol;
+
+      DrawTransformedMeshRGBA(
+        unit.vertices, unit.indices,
+        center, IdentityQuat(), half,
+        true,
+        engine::render::RenderMesh::Winding::CW
+      );
+    }
+  }
+
+  // --- 3) Solid rigid bodies (OBB surfaces; move+rotate with physics) ---
+  {
+    const auto& unit = UnitColoredBoxMesh();
+    for (const auto& b : m_rb.bodies()) {
+      DrawTransformedMeshRGBA(
+        unit.vertices, unit.indices,
+        b.position, b.orientation, b.halfExtents,
+        true,
+        engine::render::RenderMesh::Winding::CW
+      );
+    }
+  }
+
+  // --- 4) Keep wire debug overlays ---
+  glDisable(GL_CULL_FACE);
+
   glColor3f(0.55f, 0.55f, 0.55f);
   DrawGrid(40.0f, 1.0f);
 
-  // 3) Solid platforms (from static AABBs)
-  for (const auto& a : m_static) {
-    DrawSolidAABBBox(a.min, a.max, engine::geom::ColoredBox::RGBA(90, 140, 220, 255));
-  }
-
-  // 4) Solid crates (AABB proxy)
-  for (const auto& b : m_rb.bodies()) {
-    Vec3 mn = b.position - b.halfExtents;
-    Vec3 mx = b.position + b.halfExtents;
-    DrawSolidAABBBox(mn, mx, engine::geom::ColoredBox::RGBA(220, 150, 70, 255));
-  }
-
-  // 5) Keep your wire debug too
   glColor3f(0.2f, 0.9f, 0.2f);
   for (const auto& a : m_static) {
     DrawAABB(a.min, a.max);
