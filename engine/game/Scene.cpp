@@ -8,6 +8,10 @@
   #include <GL/gl.h>
 #endif
 
+static bool fe_isfinite3(const Vec3& v) {
+  return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z);
+}
+
 static void DrawGrid(float halfSize, float step) {
 #ifdef FE_NATIVE
   glBegin(GL_LINES);
@@ -57,6 +61,9 @@ static void DrawAABB(const Vec3& mn, const Vec3& mx) {
 
 static void DrawOBB(const fe::RigidBoxBody& b) {
 #ifdef FE_NATIVE
+  // If physics explodes into NaNs, don’t draw garbage (also helps confirm NaN cases)
+  if (!fe_isfinite3(b.position) || !fe_isfinite3(b.halfExtents)) return;
+
   using fe::Quat;
   using fe::quatNormalize;
   using fe::quatRotate;
@@ -133,6 +140,13 @@ void Scene::rebuildStaticAABBs() {
   m_rb.setStaticAABBs(m_static);
 }
 
+static void SpawnCrates(fe::RigidBodyWorld& rb) {
+  // Three crates, same as before
+  rb.createBox(Vec3(0.0f, 1.30f, 0.0f), Vec3(0.50f, 0.50f, 0.50f), 2.0f);
+  rb.createBox(Vec3(0.0f, 2.35f, 0.0f), Vec3(0.50f, 0.50f, 0.50f), 2.0f);
+  rb.createBox(Vec3(3.75f, 2.10f, 0.0f), Vec3(0.50f, 0.50f, 0.50f), 2.0f);
+}
+
 void Scene::init() {
   // ---- Static world platforms ----
   {
@@ -164,10 +178,8 @@ void Scene::init() {
   m_rb.velocityIters = 12;
   m_rb.positionIters = 4;
 
-  // ---- Spawn crates ----
-  m_rb.createBox(Vec3(0.0f, 1.30f, 0.0f), Vec3(0.50f, 0.50f, 0.50f), 2.0f);
-  m_rb.createBox(Vec3(0.0f, 2.35f, 0.0f), Vec3(0.50f, 0.50f, 0.50f), 2.0f);
-  m_rb.createBox(Vec3(3.75f, 2.10f, 0.0f), Vec3(0.50f, 0.50f, 0.50f), 2.0f);
+  // Spawn crates
+  SpawnCrates(m_rb);
 }
 
 void Scene::setPlayerSphere(const Vec3& center, float radius, const Vec3& velocity) {
@@ -187,6 +199,7 @@ bool Scene::getPlayerSphere(Vec3& outCenter, Vec3& outVelocity, bool& outGrounde
 
 void Scene::update(float dt) {
   static int s_frames = 0;
+  static int s_lastBodyCount = -1;
 
   for (auto& obj : m_objects) {
     if (obj) obj->update(dt);
@@ -199,16 +212,41 @@ void Scene::update(float dt) {
   const float fixed = m_rb.fixedDt;
   const float maxDt = fixed * (float)m_rb.maxSubsteps;
   const float inDt  = dt;
-
   if (dt > maxDt) dt = maxDt;
 
   if (s_frames < 60) {
     std::printf("[Scene] dt in=%f clamped=%f fixed=%f maxDt=%f\n", inDt, dt, fixed, maxDt);
   }
-  s_frames++;
 
   m_rb.step(dt);
 
+  // ---- BOX FAILSAFE + DIAGNOSTICS ----
+  const auto& bodies = m_rb.bodies();
+  const int bodyCount = (int)bodies.size();
+
+  if (s_lastBodyCount != bodyCount) {
+    std::printf("[Scene] bodies=%d\n", bodyCount);
+    // Also flag NaNs immediately if present
+    for (int i = 0; i < bodyCount && i < 3; ++i) {
+      const auto& b = bodies[i];
+      if (!fe_isfinite3(b.position)) {
+        std::printf("[Scene] body[%d] position is NaN/Inf!\n", i);
+      }
+    }
+    s_lastBodyCount = bodyCount;
+  }
+
+  // Guarantee boxes exist: if bodies drop below 3, respawn them.
+  // (This makes "boxes happen" even if physics deletes them.)
+  if (bodyCount < 3) {
+    std::printf("[Scene] respawn crates (bodyCount=%d)\n", bodyCount);
+    SpawnCrates(m_rb);
+    s_lastBodyCount = (int)m_rb.bodies().size();
+  }
+
+  s_frames++;
+
+  // Player collision output
   m_playerCenterOut = m_playerCenter;
   m_playerVelOut = m_playerVel;
   m_playerGroundedOut = false;
@@ -225,7 +263,7 @@ void Scene::render(const Mat4& view, const Mat4& proj) {
 static void LoadMat4_GL(int mode, const Mat4& M) {
 #ifdef FE_NATIVE
   glMatrixMode(mode);
-  glLoadMatrixf(M.m); // back to the non-transpose path that at least drew something
+  glLoadMatrixf(M.m);
 #else
   (void)mode; (void)M;
 #endif
@@ -233,7 +271,6 @@ static void LoadMat4_GL(int mode, const Mat4& M) {
 
 static void DrawOverlayCross2D() {
 #ifdef FE_NATIVE
-  // Draw a small cross in screen space so we know rendering is alive even if world matrices are wrong.
   glMatrixMode(GL_PROJECTION);
   glPushMatrix();
   glLoadIdentity();
@@ -250,10 +287,9 @@ static void DrawOverlayCross2D() {
   glEnd();
   glEnable(GL_DEPTH_TEST);
 
-  glPopMatrix(); // MODELVIEW
+  glPopMatrix();
   glMatrixMode(GL_PROJECTION);
-  glPopMatrix(); // PROJECTION
-
+  glPopMatrix();
   glMatrixMode(GL_MODELVIEW);
 #endif
 }
@@ -266,21 +302,17 @@ void Scene::renderDebug(const Mat4& view, const Mat4& proj) {
   glEnable(GL_DEPTH_TEST);
   glDisable(GL_CULL_FACE);
 
-  // Overlay (always visible if GL is alive)
   glColor3f(1.f, 0.f, 1.f);
   DrawOverlayCross2D();
 
-  // Grid
   glColor3f(0.6f, 0.6f, 0.6f);
   DrawGrid(20.0f, 1.0f);
 
-  // Static platforms
   glColor3f(0.2f, 0.9f, 0.2f);
   for (const auto& a : m_static) {
     DrawAABB(a.min, a.max);
   }
 
-  // Dynamic crates
   glColor3f(0.9f, 0.7f, 0.2f);
   for (const auto& b : m_rb.bodies()) {
     DrawOBB(b);
