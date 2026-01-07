@@ -163,13 +163,8 @@ void Scene::init() {
   m_rb.positionIters = 4;
 
   // ---- Spawn dynamic crates (stacked) ----
-  // Lower crate on the big platform
   m_rb.createBox(Vec3(0.0f, 1.30f, 0.0f), Vec3(0.50f, 0.50f, 0.50f), 2.0f);
-
-  // Second crate stacked on top
   m_rb.createBox(Vec3(0.0f, 2.35f, 0.0f), Vec3(0.50f, 0.50f, 0.50f), 2.0f);
-
-  // One crate on the side platform to push off
   m_rb.createBox(Vec3(3.75f, 2.10f, 0.0f), Vec3(0.50f, 0.50f, 0.50f), 2.0f);
 }
 
@@ -189,10 +184,8 @@ bool Scene::getPlayerSphere(Vec3& outCenter, Vec3& outVelocity, bool& outGrounde
 }
 
 void Scene::update(float dt) {
-  // Defensive clamp: prevents first-frame / stall dt spikes from tunneling
-  // dynamic bodies through static colliders in one step.
-  if (dt < 0.0f) dt = 0.0f;
-  if (dt > (1.0f / 30.0f)) dt = (1.0f / 30.0f); // max 33ms per frame
+  // ---- dt spike confirmation (prints first 60 frames only) ----
+  static int s_frames = 0;
 
   // Gameplay update (static objects)
   for (auto& obj : m_objects) {
@@ -202,7 +195,22 @@ void Scene::update(float dt) {
   // Static colliders might change later (destruction). For now, rebuild each frame is cheap.
   rebuildStaticAABBs();
 
-  // Step rigid-body world
+  // Step rigid-body world (with SAFE clamp, no double-step risk)
+  if (dt < 0.0f) dt = 0.0f;
+
+  const float fixed = m_rb.fixedDt;
+  const float maxDt = fixed * (float)m_rb.maxSubsteps;
+  const float inDt  = dt;
+
+  if (dt > maxDt) dt = maxDt;
+
+  if (s_frames < 60) {
+    // Prints enough to confirm if the first frames are huge.
+    // If you see inDt >> maxDt early, that’s the spike.
+    printf("[Scene] dt in=%f clamped=%f fixed=%f maxDt=%f\n", inDt, dt, fixed, maxDt);
+  }
+  s_frames++;
+
   m_rb.step(dt);
 
   // Collide player sphere against crates + platforms + ground
@@ -216,24 +224,18 @@ void Scene::update(float dt) {
 }
 
 void Scene::render(const Mat4& view, const Mat4& proj) {
- // Intentionally empty.
-  // Real rendering (RenderMesh, terrain, props) goes here.
   // Debug visualization lives in renderDebug().
   renderDebug(view, proj);
 }
 
-
 static void LoadMat4_GL(int mode, const Mat4& M) {
 #ifdef FE_NATIVE
   glMatrixMode(mode);
-  glLoadMatrixf(M.m);   // <-- no transpose
+  glLoadMatrixf(M.m);   // no transpose
 #else
   (void)mode; (void)M;
 #endif
 }
-
-
-
 
 void Scene::renderDebug(const Mat4& view, const Mat4& proj) {
 #ifdef FE_NATIVE
@@ -264,6 +266,3 @@ void Scene::renderDebug(const Mat4& view, const Mat4& proj) {
   (void)view; (void)proj;
 #endif
 }
-
-
-
