@@ -278,6 +278,7 @@ static bool satOBBOBB(const RigidBoxBody& A, const RigidBoxBody& B, Vec3& outN, 
 
     if (pen < bestPen) {
       bestPen = pen;
+      // Normal should point from B -> A.
       bestAxis = (dot3(d, a) < 0.f) ? a : (a * -1.f);
     }
   }
@@ -365,11 +366,8 @@ void PhysicsWorldRB::contactsBoxGround(const RigidBoxBody& A, std::vector<Contac
 
 void PhysicsWorldRB::contactsBoxStaticAABB(const RigidBoxBody& A, const AABB& S, std::vector<Contact>& out) {
   // Special-case: stable support contact against the TOP face of the static AABB.
-  // This fixes "one edge over an edge => cube starts falling" by emitting a manifold
-  // of bottom-vertex contacts near the top surface, not only when a vertex is inside.
   const float topY = S.max.y;
 
-  // Collect bottom vertices of OBB
   Vec3 ax, ay, az; computeOBBAxes(A, ax, ay, az);
 
   Vec3 verts[8];
@@ -385,33 +383,24 @@ void PhysicsWorldRB::contactsBoxStaticAABB(const RigidBoxBody& A, const AABB& S,
     if (v.y < minY) minY = v.y;
   }
 
-  // If the box is nowhere near the top surface, do nothing here.
-  // (Other faces handled by fallback below.)
-  const float near = 0.08f;     // contact "skin" for stability
-  if (minY > topY + near) {
-    // box is clearly above
-  } else {
-    // Emit up to 4 bottom contacts that are within the AABB footprint and near the top plane.
+  const float near = 0.08f;
+  if (minY <= topY + near) {
     const float epsY = 0.02f;
     int emitted = 0;
 
     for (int i=0; i<8 && emitted < 4; ++i) {
       const Vec3& v = verts[i];
-
-      // only bottom-ish verts
       if (v.y > minY + epsY) continue;
 
-      // within footprint (with small tolerance)
       const float tol = 0.02f;
       if (v.x < S.min.x - tol || v.x > S.max.x + tol) continue;
       if (v.z < S.min.z - tol || v.z > S.max.z + tol) continue;
 
-      // if vertex is at/under the top plane (or very close), create a support contact
       if (v.y <= topY + near) {
         Contact c;
         c.a = A.id;
         c.b = 0;
-        c.point = Vec3(v.x, topY, v.z);      // snap point onto plane
+        c.point = Vec3(v.x, topY, v.z);
         c.normal = Vec3(0, 1, 0);
         c.penetration = std::max(0.0f, topY - v.y);
         out.push_back(c);
@@ -419,7 +408,6 @@ void PhysicsWorldRB::contactsBoxStaticAABB(const RigidBoxBody& A, const AABB& S,
       }
     }
 
-    // If we emitted support contacts, we’re done (stable top contact manifold).
     if (emitted > 0) return;
   }
 
@@ -460,7 +448,6 @@ void PhysicsWorldRB::contactsBoxStaticAABB(const RigidBoxBody& A, const AABB& S,
     }
   }
 }
-
 
 void PhysicsWorldRB::gatherContacts(std::vector<Contact>& out) {
   out.clear();
@@ -538,7 +525,6 @@ void PhysicsWorldRB::solveVelocity(const Contact& c) {
   applyImpulse(*A, impulse, ra);
   if (B) applyImpulse(*B, impulse * -1.f, rb);
 
-
   // friction
   rv = (A->linearVelocity + cross(A->angularVelocity, ra)) - (B ? (B->linearVelocity + cross(B->angularVelocity, rb)) : Vec3(0,0,0));
   Vec3 t = rv - n * dot3(rv, n);
@@ -602,10 +588,9 @@ void PhysicsWorldRB::solvePosition(const Contact& c) {
   }
 
   // Normal is B->A, so A moves along +n, B along -n
-if (A->isDynamic()) A->position = A->position + corr * wA;
-if (B && B->isDynamic()) B->position = B->position - corr * wB;
+  if (A->isDynamic()) A->position = A->position + corr * wA;
+  if (B && B->isDynamic()) B->position = B->position - corr * wB;
 
-  // sanitize immediately after correction (this is where "finite but insane" often happens)
   sanitizeBody(*A, "solvePosition:A");
   if (B) sanitizeBody(*B, "solvePosition:B");
 }
@@ -615,9 +600,10 @@ void PhysicsWorldRB::updateSleeping(RigidBoxBody& b, float h) {
 
   const float v2 = len2(b.linearVelocity);
   const float w2 = len2(b.angularVelocity);
-  
+
   if (v2 < 1e-4f) b.linearVelocity = Vec3(0,0,0);
   if (w2 < 1e-4f) b.angularVelocity = Vec3(0,0,0);
+
   if (v2 < b.sleepVel*b.sleepVel && w2 < b.sleepAngVel*b.sleepAngVel) {
     b.sleepTimer += h;
     if (b.sleepTimer >= b.sleepTime) {
@@ -657,33 +643,73 @@ bool PhysicsWorldRB::collidePlayerSphere(Vec3& center, float radius, Vec3& playe
       Vec3 n = delta * (1.f/dist);
       float pen = radius - dist;
 
+      // If this is a "side" hit, don't let the resolution normal push the player down/up.
+      if (std::fabs(n.y) < 0.5f) {
+        n.y = 0.0f;
+        float n2 = len2(n);
+        if (n2 > 1e-10f) n = n * (1.0f / std::sqrt(n2));
+      }
+
+      // Push player out
       center = center + n * pen;
 
+      // Remove player velocity into normal
       float vn = dot3(playerVel, n);
       if (vn < 0.f) playerVel = playerVel - n * vn;
 
+      // --- Player -> box interaction (impulse at contact point for torque) ---
+      // Only apply as a horizontal impulse so we don't inject vertical "rocket" energy.
       Vec3 nh(n.x, 0.0f, n.z);
       float nh2 = len2(nh);
       if (nh2 > 1e-8f) {
         nh = nh * (1.0f / std::sqrt(nh2));
-        float vnh = dot3(playerVel, nh);
-        if (vnh < 0.f) {
-          float push = 2.0f; // was 6.0f
-        Vec3 dv = nh * (-push * vnh);
-          const float maxDv = 4.0f;
-          float dv2 = len2(dv);
-          if (dv2 > maxDv*maxDv) dv = dv * (maxDv / std::sqrt(dv2));
-          b.linearVelocity = b.linearVelocity + dv;
+
+        // player moving into box => positive vInto
+        float vInto = -dot3(playerVel, nh);
+        if (vInto > 0.0f) {
+          const float playerMass = 40.0f; // tune feel
+          const float pushScale  = 1.5f;  // tune feel
+          float j = playerMass * pushScale * vInto;
+
+          const float maxJ = 30.0f;
+          if (j > maxJ) j = maxJ;
+
+          Vec3 impulse = nh * j;
+          Vec3 r = closest - b.position;
+          applyImpulse(b, impulse, r);
+
+          b.asleep = false;
+          b.sleepTimer = 0.f;
         }
       }
 
-      if (n.y > 0.6f) grounded = true;
+      // Standing on a box: apply a small downward "weight" impulse at the contact.
+      // This allows tipping when standing off-center.
+      if (n.y > 0.6f) {
+        grounded = true;
+
+        const float playerMass = 40.0f;
+        const float g = std::fabs(gravity.y);
+        float jW = playerMass * g * fixedDt; // impulse ~ F*dt
+
+        const float maxJW = 20.0f;
+        if (jW > maxJW) jW = maxJW;
+
+        Vec3 impulseW(0.0f, -jW, 0.0f);
+        Vec3 rW = closest - b.position;
+        applyImpulse(b, impulseW, rW);
+
+        b.asleep = false;
+        b.sleepTimer = 0.f;
+      }
+
       hit = true;
       b.asleep = false;
       b.sleepTimer = 0.f;
     }
   }
 
+  // collide vs static AABBs (player vs level geometry)
   for (const auto& s : m_static) {
     Vec3 cl = clampVec3(center, s.min, s.max);
     Vec3 d = center - cl;
@@ -737,7 +763,6 @@ void PhysicsWorldRB::substep(float h) {
 
   for (auto& b : m_bodies) {
     updateSleeping(b, h);
-    // final sanitize after everything
     sanitizeBody(b, "substep:end");
   }
 }
