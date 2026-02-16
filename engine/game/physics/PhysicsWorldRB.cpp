@@ -409,41 +409,85 @@ static bool pointInOBB(const Vec3& p, const RigidBoxBody& b) {
       && std::fabs(pz) <= b.halfExtents.z + eps;
 }
 
-void PhysicsWorldRB::contactsBoxBox(const RigidBoxBody& A, const RigidBoxBody& B, std::vector<Contact>& out) {
-  Vec3 n; float pen;
-  if (!satOBBOBB(A, B, n, pen)) return;
+void PhysicsWorldRB::contactsBoxStaticMeshes(const RigidBoxBody& A, std::vector<Contact>& out) {
+  if (m_staticMeshes.empty()) return;
 
-  std::vector<Vec3> pts;
-  pts.reserve(16);
+  const float skin = std::max(0.001f, contactSkin);
 
-  const int s[2] = {-1, 1};
-  for (int ix: s) for (int iy: s) for (int iz: s) {
-    Vec3 v = obbVertex(A, ix, iy, iz);
-    if (pointInOBB(v, B)) pts.push_back(v);
+  Vec3 boxVerts[8];
+  int idx = 0;
+  const int s[2] = {-1,1};
+  for (int ix : s) for (int iy : s) for (int iz : s)
+    boxVerts[idx++] = obbVertex(A, ix, iy, iz);
+
+  struct Cand { Contact c; };
+  std::vector<Cand> cands;
+  cands.reserve(16);
+
+  // Best contact per corner vertex (deepest)
+  for (int vi = 0; vi < 8; ++vi) {
+    const Vec3& p = boxVerts[vi];
+
+    bool  hasBest = false;
+    float bestPen = 0.f;
+    Contact bestC;
+
+    for (const auto& mesh : m_staticMeshes) {
+      if (mesh.indices.size() < 3 || mesh.verts.empty()) continue;
+
+      for (size_t ti = 0; ti + 2 < mesh.indices.size(); ti += 3) {
+        const Vec3& a = mesh.verts[mesh.indices[ti+0]];
+        const Vec3& b = mesh.verts[mesh.indices[ti+1]];
+        const Vec3& c = mesh.verts[mesh.indices[ti+2]];
+
+        // IMPORTANT:
+        // Our engine meshes are CW-wound for rendering.
+        // cross(b-a, c-a) assumes CCW => normal points the wrong way.
+        // Flip it so the physics normal points "outward" for these meshes.
+        Vec3 n = cross(b - a, c - a) * -1.f;
+        if (!safeNormalize(n)) continue;
+
+        Vec3 cp = closestPointOnTri(p, a, b, c);
+
+        // Signed distance along outward normal
+        float dist = dot3(p - cp, n);
+
+        // Contact whenever the point is penetrating OR within skin band.
+        // This prevents "no contact at exact rest" which causes jitter/drop.
+        if (dist > skin) continue;
+
+        float pen = skin - dist; // if dist negative => bigger penetration
+        const float slop = 0.0025f;
+        if (pen <= slop) continue;
+        pen -= slop;
+
+        if (!hasBest || pen > bestPen) {
+          hasBest = true;
+          bestPen = pen;
+          bestC.a = A.id;
+          bestC.b = 0;
+          bestC.point = cp;
+          bestC.normal = n;
+          bestC.penetration = pen;
+        }
+      }
+    }
+
+    if (hasBest) cands.push_back({bestC});
   }
-  for (int ix: s) for (int iy: s) for (int iz: s) {
-    Vec3 v = obbVertex(B, ix, iy, iz);
-    if (pointInOBB(v, A)) pts.push_back(v);
-  }
 
-  if (pts.empty()) {
-    Vec3 p = (A.position + B.position) * 0.5f + n * (pen * 0.5f);
-    pts.push_back(p);
-  }
+  if (cands.empty()) return;
 
-  if (pts.size() > 4) pts.resize(4);
-  const float penEach = pen / (float)pts.size();
+  std::sort(cands.begin(), cands.end(), [](const Cand& x, const Cand& y){
+    return x.c.penetration > y.c.penetration;
+  });
 
-  for (const Vec3& p : pts) {
-    Contact c;
-    c.a = A.id;
-    c.b = B.id;
-    c.point = p;
-    c.normal = n;          // B -> A
-    c.penetration = penEach;
-    out.push_back(c);
-  }
+  // Keep more contacts for stable stacking
+  const int keep = std::min<int>(8, (int)cands.size());
+  for (int i=0;i<keep;++i)
+    out.push_back(cands[(size_t)i].c);
 }
+
 
 // ------------------------------------------------------------
 // Gather
