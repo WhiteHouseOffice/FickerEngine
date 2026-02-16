@@ -322,7 +322,6 @@ void PhysicsWorldRB::contactsBoxTerrain(const RigidBoxBody& A, std::vector<Conta
 
       Vec3 nn = terrainNormalAt(v.x, v.z);
       if (!safeNormalize(nn)) nn = Vec3(0,1,0);
-      // NEW: snap near-flat normals to pure up to prevent drift injection
       if (nn.y > 0.92f) nn = Vec3(0,1,0);
       c.normal = nn;
 
@@ -335,9 +334,6 @@ void PhysicsWorldRB::contactsBoxTerrain(const RigidBoxBody& A, std::vector<Conta
 
 // ------------------------------------------------------------
 // Contacts: box vs static triangle meshes (stabilized)
-// - penetration-only
-// - prefer upward-ish normals (platform floors)
-// - max 1 best triangle per corner (<= 8 contacts)
 // ------------------------------------------------------------
 void PhysicsWorldRB::contactsBoxStaticMeshes(const RigidBoxBody& A, std::vector<Contact>& out) {
   if (m_staticMeshes.empty()) return;
@@ -362,15 +358,11 @@ void PhysicsWorldRB::contactsBoxStaticMeshes(const RigidBoxBody& A, std::vector<
       const Vec3& b = mesh.verts[mesh.indices[ti+1]];
       const Vec3& c = mesh.verts[mesh.indices[ti+2]];
 
-      // CW-wound meshes -> flip
       Vec3 n = cross3(b - a, c - a) * -1.f;
       if (!safeNormalize(n)) continue;
 
-      // force "floor-ish" direction (prevents underside/side weirdness)
       if (n.y < 0.f) n = n * -1.f;
       if (n.y < 0.35f) continue;
-
-      // NEW: snap near-flat normals to pure up to prevent drift injection
       if (n.y > 0.92f) n = Vec3(0,1,0);
 
       for (int vi=0; vi<8; ++vi) {
@@ -378,14 +370,10 @@ void PhysicsWorldRB::contactsBoxStaticMeshes(const RigidBoxBody& A, std::vector<
         Vec3 cp = closestPointOnTri(p, a, b, c);
 
         float dist = dot3(p - cp, n);
-
-        // penetration-only
         if (dist >= 0.f) continue;
 
         float pen = (-dist) - slop;
         if (pen <= 0.f) continue;
-
-        // prevent insane corrections that create pop/teleport loops
         if (pen > 0.20f) pen = 0.20f;
 
         if (!has[vi] || pen > bestPen[vi]) {
@@ -407,16 +395,12 @@ void PhysicsWorldRB::contactsBoxStaticMeshes(const RigidBoxBody& A, std::vector<
 
 // ------------------------------------------------------------
 // Contacts: box vs box
-// - SAT gives normal + penetration
-// - If mostly vertical, emit 4 bottom-face contacts for stable stacking
 // ------------------------------------------------------------
 void PhysicsWorldRB::contactsBoxBox(const RigidBoxBody& A, const RigidBoxBody& B, std::vector<Contact>& out) {
   Vec3 n; float pen;
   if (!satOBBOBB(A, B, n, pen)) return;
 
-  // Stronger manifold for stacking (vertical-ish normal)
   if (std::fabs(n.y) > 0.70f) {
-    // n points from B -> A. If n.y > 0 then A is above B.
     const RigidBoxBody& Top = (n.y > 0.f) ? A : B;
 
     Vec3 vertsTop[8];
@@ -444,7 +428,6 @@ void PhysicsWorldRB::contactsBoxBox(const RigidBoxBody& A, const RigidBoxBody& B
     if (emitted > 0) return;
   }
 
-  // Fallback: vertices inside the other box
   std::vector<Vec3> pts;
   pts.reserve(16);
 
@@ -472,14 +455,14 @@ void PhysicsWorldRB::contactsBoxBox(const RigidBoxBody& A, const RigidBoxBody& B
     c.a = A.id;
     c.b = B.id;
     c.point = p;
-    c.normal = n;          // B -> A
+    c.normal = n;
     c.penetration = penEach;
     out.push_back(c);
   }
 }
 
 // ------------------------------------------------------------
-// Gather
+// Gather  (FIX: avoid double-ground sources)
 // ------------------------------------------------------------
 void PhysicsWorldRB::gatherContacts(std::vector<Contact>& out) {
   out.clear();
@@ -488,10 +471,22 @@ void PhysicsWorldRB::gatherContacts(std::vector<Contact>& out) {
   for (auto& b : m_bodies) {
     if (!b.isDynamic() || b.asleep) continue;
 
-    if (enableTerrain) contactsBoxTerrain(b, out);
-    if (enableGround)  contactsBoxGround(b, out);
+    // IMPORTANT:
+    // Use exactly ONE "ground" source per frame.
+    // Terrain wins over ground plane.
+    if (enableTerrain) {
+      contactsBoxTerrain(b, out);
+    } else if (enableGround) {
+      contactsBoxGround(b, out);
+    }
 
-    contactsBoxStaticMeshes(b, out);
+    // DIAGNOSTIC:
+    // If terrain is enabled, static meshes often accidentally include the terrain too,
+    // producing double-contacts at different heights => drift/rolling.
+    // So for now: don't mix terrain + static meshes.
+    if (!enableTerrain) {
+      contactsBoxStaticMeshes(b, out);
+    }
   }
 
   for (size_t i = 0; i < m_bodies.size(); ++i) {
@@ -561,7 +556,6 @@ void PhysicsWorldRB::solveVelocity(const Contact& c) {
   applyImpulse(*A, impulse, ra);
   if (B) applyImpulse(*B, impulse * -1.f, rb);
 
-  // friction
   rv = (A->linearVelocity + cross3(A->angularVelocity, ra))
      - (B ? (B->linearVelocity + cross3(B->angularVelocity, rb)) : Vec3(0,0,0));
 
@@ -603,10 +597,8 @@ void PhysicsWorldRB::solvePosition(const Contact& c) {
   Vec3 n = c.normal;
   if (!safeNormalize(n)) return;
 
-  // NEW: failsafe snap for near-flat contacts to prevent drift injection
   if (n.y > 0.92f) n = Vec3(0,1,0);
 
-  // gentle correction
   const float slop = 0.006f;
   const float percent = 0.10f;
 
@@ -620,7 +612,6 @@ void PhysicsWorldRB::solvePosition(const Contact& c) {
 
   Vec3 corr = n * (percent * pen / wSum);
 
-  // clamp correction
   const float maxCorr = 0.05f;
   float c2 = len2(corr);
   if (c2 > maxCorr * maxCorr) {
@@ -706,7 +697,6 @@ bool PhysicsWorldRB::collidePlayerSphere(Vec3& center, float radius, Vec3& playe
     float vn = dot3(playerVel, nRes);
     if (vn < 0.f) playerVel -= nRes * vn;
 
-    // push box horizontally only (no rocket up)
     Vec3 nh(nRaw.x, 0.0f, nRaw.z);
     if (safeNormalize(nh)) {
       if (std::fabs(nRaw.y) < 0.85f) {
@@ -774,7 +764,6 @@ void PhysicsWorldRB::substep(float h) {
   for (int it=0; it<positionIters; ++it)
     for (const auto& c : contacts) solvePosition(c);
 
-  // supported detection: any contact with a "ground-ish" normal
   std::vector<uint8_t> supported(m_bodies.size(), 0);
   for (const auto& c : contacts) {
     if (c.normal.y < 0.75f) continue;
@@ -783,7 +772,6 @@ void PhysicsWorldRB::substep(float h) {
     }
   }
 
-  // kill endless drift/spin when supported (resting stabilization)
   for (size_t i=0;i<m_bodies.size();++i) {
     if (!supported[i]) continue;
     auto& b = m_bodies[i];
