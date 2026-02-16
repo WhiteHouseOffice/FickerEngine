@@ -9,28 +9,30 @@ namespace fe {
 
 struct Contact {
   uint32_t a = 0;
-  uint32_t b = 0; // 0 => static world (AABB, ground, terrain)
+  uint32_t b = 0; // 0 => static world (AABB/ground/terrain)
 
   Vec3 point{0.f,0.f,0.f};   // world contact point
-  Vec3 normal{0.f,1.f,0.f};  // surface normal pointing OUT of static/other INTO A
-  float penetration = 0.f;   // >=0. Can be 0 in contact-skin band
+  // IMPORTANT: normal points from "other" (B or static) toward A.
+  // This matches solver convention (impulse applied to A along +n).
+  Vec3 normal{0.f,1.f,0.f};
+  float penetration = 0.f;   // >=0. Can be 0 inside contactSkin band.
 };
 
 class PhysicsWorldRB {
 public:
   Vec3 gravity{0.f, -18.f, 0.f};
 
-  // Flat plane (legacy)
+  // Legacy infinite plane (you can disable this when using terrain mesh collision)
   bool  enableGround = true;
   float groundY = 0.f;
 
-  // Terrain heightfield via callbacks (preferred for hills)
+  // Terrain collision from render mesh data (full vertex count) via callbacks.
+  // Scene owns the mesh; physics only queries heights/normals.
   using TerrainHeightFn = float(*)(void* user, float x, float z);
   using TerrainNormalFn = Vec3 (*)(void* user, float x, float z);
 
   bool enableTerrain = false;
 
-  // Set to enable terrain collision. Uses render-terrain height function (no mesh duplication).
   void setTerrainCallbacks(TerrainHeightFn heightFn, TerrainNormalFn normalFn, void* user) {
     m_terrainHeightFn = heightFn;
     m_terrainNormalFn = normalFn;
@@ -41,7 +43,7 @@ public:
   float restitution = 0.0f;
   float friction = 0.6f;
 
-  // IMPORTANT: This fixes “no friction at rest” by keeping contacts alive slightly above surfaces.
+  // Contact skin keeps contacts alive slightly above surfaces, so friction works at rest
   float contactSkin = 0.06f;
 
   float fixedDt = 1.f/120.f;
@@ -55,11 +57,10 @@ public:
 
   void clearDynamics();
 
-  // Provide static colliders each frame (platforms from Scene/GameObject)
+  // Static colliders (platforms). Keeping AABBs for now — terrain uses full mesh vertices.
   void setStaticAABBs(const std::vector<AABB>& aabbs) { m_static = aabbs; }
 
-  // Player as kinematic sphere. Returns true if we corrected it (collided).
-  // If outGrounded != nullptr, set to true if supporting contact was found.
+  // Player as kinematic sphere.
   bool collidePlayerSphere(Vec3& center, float radius, Vec3& playerVel, bool* outGrounded);
 
   void step(float dt);
