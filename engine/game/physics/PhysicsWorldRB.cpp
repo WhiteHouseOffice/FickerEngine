@@ -1,41 +1,36 @@
 #include "game/physics/PhysicsWorldRB.h"
 #include <cmath>
 #include <algorithm>
-#include <vector>
 
 namespace fe {
 
 static inline float dot3(const Vec3& a, const Vec3& b){ return a.x*b.x + a.y*b.y + a.z*b.z; }
+static inline Vec3  cross3(const Vec3& a, const Vec3& b){ return cross(a,b); }
 static inline float len2(const Vec3& v){ return dot3(v,v); }
 static inline float clampf(float x, float a, float b) { return (x < a) ? a : (x > b ? b : x); }
 
-static inline bool finite1(float f) { return std::isfinite(f); }
-static inline bool finite3(const Vec3& v) { return finite1(v.x) && finite1(v.y) && finite1(v.z); }
-
 static inline bool safeNormalize(Vec3& v) {
   float l2 = len2(v);
-  if (!finite1(l2) || l2 < 1e-12f) return false;
+  if (!std::isfinite(l2) || l2 < 1e-12f) return false;
   v = v * (1.0f / std::sqrt(l2));
-  return finite3(v);
+  return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z);
 }
 
 static inline Quat safeQuatNormalize(const Quat& q) {
   float l2 = q.w*q.w + q.x*q.x + q.y*q.y + q.z*q.z;
-  if (!finite1(l2) || l2 < 1e-20f) return Quat::identity();
+  if (!std::isfinite(l2) || l2 < 1e-20f) return Quat::identity();
   float inv = 1.0f / std::sqrt(l2);
   return Quat{ q.w*inv, q.x*inv, q.y*inv, q.z*inv };
 }
 
-static constexpr float kSupportNMin = 0.75f;
-
-// ============================================================
+// ------------------------------------------------------------
 // Closest point on triangle (Ericson)
-// ============================================================
+// ------------------------------------------------------------
 static Vec3 closestPointOnTri(const Vec3& p, const Vec3& a, const Vec3& b, const Vec3& c) {
-  // Check vertex regions
   Vec3 ab = b - a;
   Vec3 ac = c - a;
   Vec3 ap = p - a;
+
   float d1 = dot3(ab, ap);
   float d2 = dot3(ac, ap);
   if (d1 <= 0.f && d2 <= 0.f) return a;
@@ -68,16 +63,15 @@ static Vec3 closestPointOnTri(const Vec3& p, const Vec3& a, const Vec3& b, const
     return b + (c - b) * w;
   }
 
-  // Inside face
   float denom = 1.f / (va + vb + vc);
   float v = vb * denom;
   float w = vc * denom;
   return a + ab * v + ac * w;
 }
 
-// ============================================================
+// ------------------------------------------------------------
 // OBB helpers
-// ============================================================
+// ------------------------------------------------------------
 static void computeOBBAxes(const RigidBoxBody& b, Vec3& ax, Vec3& ay, Vec3& az) {
   Quat qn = safeQuatNormalize(b.orientation);
   ax = quatRotate(qn, Vec3(1,0,0));
@@ -94,19 +88,6 @@ static Vec3 obbVertex(const RigidBoxBody& b, int sx, int sy, int sz) {
     + az * (b.halfExtents.z * (float)sz);
 }
 
-static bool pointInOBB(const Vec3& p, const RigidBoxBody& b) {
-  Vec3 ax, ay, az;
-  computeOBBAxes(b, ax, ay, az);
-  Vec3 d = p - b.position;
-  float px = dot3(d, ax);
-  float py = dot3(d, ay);
-  float pz = dot3(d, az);
-  const float eps = 1e-4f;
-  return std::fabs(px) <= b.halfExtents.x + eps
-      && std::fabs(py) <= b.halfExtents.y + eps
-      && std::fabs(pz) <= b.halfExtents.z + eps;
-}
-
 static float projectRadius(const RigidBoxBody& b, const Vec3& axis) {
   Vec3 ax, ay, az;
   computeOBBAxes(b, ax, ay, az);
@@ -115,7 +96,6 @@ static float projectRadius(const RigidBoxBody& b, const Vec3& axis) {
        + std::fabs(dot3(axis, az)) * b.halfExtents.z;
 }
 
-// SAT for OBB vs OBB. outN points from B -> A.
 static bool satOBBOBB(const RigidBoxBody& A, const RigidBoxBody& B, Vec3& outN, float& outPen) {
   Vec3 Ax, Ay, Az; computeOBBAxes(A, Ax, Ay, Az);
   Vec3 Bx, By, Bz; computeOBBAxes(B, Bx, By, Bz);
@@ -123,9 +103,9 @@ static bool satOBBOBB(const RigidBoxBody& A, const RigidBoxBody& B, Vec3& outN, 
   Vec3 axes[15] = {
     Ax,Ay,Az,
     Bx,By,Bz,
-    cross(Ax,Bx), cross(Ax,By), cross(Ax,Bz),
-    cross(Ay,Bx), cross(Ay,By), cross(Ay,Bz),
-    cross(Az,Bx), cross(Az,By), cross(Az,Bz)
+    cross3(Ax,Bx), cross3(Ax,By), cross3(Ax,Bz),
+    cross3(Ay,Bx), cross3(Ay,By), cross3(Ay,Bz),
+    cross3(Az,Bx), cross3(Az,By), cross3(Az,Bz)
   };
 
   Vec3 d = B.position - A.position;
@@ -136,7 +116,7 @@ static bool satOBBOBB(const RigidBoxBody& A, const RigidBoxBody& B, Vec3& outN, 
   for (int i=0; i<15; ++i) {
     Vec3 a = axes[i];
     float l2 = len2(a);
-    if (!finite1(l2) || l2 < 1e-10f) continue;
+    if (!std::isfinite(l2) || l2 < 1e-10f) continue;
     a = a * (1.f / std::sqrt(l2));
 
     float ra = projectRadius(A, a);
@@ -147,7 +127,8 @@ static bool satOBBOBB(const RigidBoxBody& A, const RigidBoxBody& B, Vec3& outN, 
 
     if (pen < bestPen) {
       bestPen = pen;
-      bestAxis = (dot3(d, a) > 0.f) ? (a * -1.f) : a; // want B -> A
+      // want normal from B -> A
+      bestAxis = (dot3(d, a) > 0.f) ? (a * -1.f) : a;
     }
   }
 
@@ -156,9 +137,29 @@ static bool satOBBOBB(const RigidBoxBody& A, const RigidBoxBody& B, Vec3& outN, 
   return true;
 }
 
-// ============================================================
-// Creation / access
-// ============================================================
+// ------------------------------------------------------------
+// World inertia
+// ------------------------------------------------------------
+Mat3 PhysicsWorldRB::invInertiaWorld(const RigidBoxBody& b) const {
+  Quat qn = safeQuatNormalize(b.orientation);
+  Mat3 R = quatToMat3(qn);
+  return mat3Mul(mat3Mul(R, b.invInertiaLocal), mat3Transpose(R));
+}
+
+void PhysicsWorldRB::applyImpulse(RigidBoxBody& b, const Vec3& impulse, const Vec3& r) {
+  if (!b.isDynamic()) return;
+
+  b.linearVelocity = b.linearVelocity + impulse * b.invMass;
+  Vec3 dw = mat3Mul(invInertiaWorld(b), cross3(r, impulse));
+  b.angularVelocity = b.angularVelocity + dw;
+
+  b.asleep = false;
+  b.sleepTimer = 0.f;
+}
+
+// ------------------------------------------------------------
+// Create / access
+// ------------------------------------------------------------
 uint32_t PhysicsWorldRB::createBox(const Vec3& pos, const Vec3& halfExtents, float mass) {
   RigidBoxBody b;
   b.id = m_nextId++;
@@ -173,13 +174,6 @@ uint32_t PhysicsWorldRB::createBox(const Vec3& pos, const Vec3& halfExtents, flo
     b.invMass = 0.f;
     b.invInertiaLocal = Mat3{};
   }
-
-  // Better settling defaults (still tweakable per-object)
-  b.linearDamping  = 0.14f;
-  b.angularDamping = 0.22f;
-  b.sleepVel       = 0.10f;
-  b.sleepAngVel    = 0.12f;
-  b.sleepTime      = 0.28f;
 
   m_bodies.push_back(b);
   return b.id;
@@ -197,28 +191,25 @@ void PhysicsWorldRB::clearDynamics() {
   m_accum = 0.f;
 }
 
-// ============================================================
-// Integration / inertia
-// ============================================================
-Mat3 PhysicsWorldRB::invInertiaWorld(const RigidBoxBody& b) const {
-  Quat qn = safeQuatNormalize(b.orientation);
-  Mat3 R = quatToMat3(qn);
-  return mat3Mul(mat3Mul(R, b.invInertiaLocal), mat3Transpose(R));
+// ------------------------------------------------------------
+// Terrain callbacks
+// ------------------------------------------------------------
+float PhysicsWorldRB::terrainHeightAt(float x, float z) const {
+  if (!m_terrainHeightFn) return -1e30f;
+  return m_terrainHeightFn(m_terrainUser, x, z);
 }
 
-void PhysicsWorldRB::applyImpulse(RigidBoxBody& b, const Vec3& impulse, const Vec3& r) {
-  if (!b.isDynamic()) return;
-
-  if (b.asleep && len2(impulse) > 1e-6f) {
-    b.asleep = false;
-    b.sleepTimer = 0.f;
+Vec3 PhysicsWorldRB::terrainNormalAt(float x, float z) const {
+  if (m_terrainNormalFn) {
+    Vec3 n = m_terrainNormalFn(m_terrainUser, x, z);
+    if (safeNormalize(n)) return n;
   }
-
-  b.linearVelocity = b.linearVelocity + impulse * b.invMass;
-  Vec3 dw = mat3Mul(invInertiaWorld(b), cross(r, impulse));
-  b.angularVelocity = b.angularVelocity + dw;
+  return Vec3(0,1,0);
 }
 
+// ------------------------------------------------------------
+// Integrate
+// ------------------------------------------------------------
 void PhysicsWorldRB::integrateOrientation(RigidBoxBody& b, float h) {
   Quat q = safeQuatNormalize(b.orientation);
   Vec3 w = b.angularVelocity;
@@ -230,7 +221,7 @@ void PhysicsWorldRB::integrateOrientation(RigidBoxBody& b, float h) {
   q.y += 0.5f * dq.y * h;
   q.z += 0.5f * dq.z * h;
 
-  b.orientation = safeQuatNormalize(q);
+  b.orientation = quatNormalize(q);
 }
 
 void PhysicsWorldRB::integrate(RigidBoxBody& b, float h) {
@@ -256,31 +247,15 @@ void PhysicsWorldRB::applyDamping(RigidBoxBody& b, float h) {
   b.angularVelocity = b.angularVelocity * angMul;
 }
 
-// ============================================================
-// Terrain callbacks
-// ============================================================
-float PhysicsWorldRB::terrainHeightAt(float x, float z) const {
-  if (!m_terrainHeightFn) return -1e30f;
-  return m_terrainHeightFn(m_terrainUser, x, z);
-}
-
-Vec3 PhysicsWorldRB::terrainNormalAt(float x, float z) const {
-  if (m_terrainNormalFn) {
-    Vec3 n = m_terrainNormalFn(m_terrainUser, x, z);
-    if (safeNormalize(n)) return n;
-  }
-  return Vec3(0,1,0);
-}
-
-// ============================================================
-// Contacts
-// ============================================================
+// ------------------------------------------------------------
+// Contacts: ground + terrain
+// ------------------------------------------------------------
 void PhysicsWorldRB::contactsBoxGround(const RigidBoxBody& A, std::vector<Contact>& out) {
   const float skin = std::max(0.001f, contactSkin);
 
-  float minY = 1e30f;
   Vec3 verts[8];
   int idx = 0;
+  float minY = 1e30f;
 
   const int s[2] = {-1,1};
   for (int ix : s) for (int iy : s) for (int iz : s) {
@@ -291,12 +266,11 @@ void PhysicsWorldRB::contactsBoxGround(const RigidBoxBody& A, std::vector<Contac
 
   if (minY > groundY + skin) return;
 
+  // emit up to 4 bottom vertices near minY
   int emitted = 0;
   const float nearMin = minY + 0.02f;
-  const float planeBand = groundY + skin;
-
   for (int i=0;i<8 && emitted<4;i++) {
-    if (verts[i].y <= nearMin && verts[i].y <= planeBand) {
+    if (verts[i].y <= nearMin && verts[i].y <= groundY + skin) {
       Contact c;
       c.a = A.id;
       c.b = 0;
@@ -307,18 +281,6 @@ void PhysicsWorldRB::contactsBoxGround(const RigidBoxBody& A, std::vector<Contac
       emitted++;
     }
   }
-
-  if (emitted == 0) {
-    int best = 0;
-    for (int i=1;i<8;i++) if (verts[i].y < verts[best].y) best = i;
-    Contact c;
-    c.a = A.id;
-    c.b = 0;
-    c.point = Vec3(verts[best].x, groundY, verts[best].z);
-    c.normal = Vec3(0,1,0);
-    c.penetration = std::max(0.f, groundY - verts[best].y);
-    out.push_back(c);
-  }
 }
 
 void PhysicsWorldRB::contactsBoxTerrain(const RigidBoxBody& A, std::vector<Contact>& out) {
@@ -328,7 +290,6 @@ void PhysicsWorldRB::contactsBoxTerrain(const RigidBoxBody& A, std::vector<Conta
 
   Vec3 verts[8];
   int idx = 0;
-
   const int s[2] = {-1,1};
   for (int ix : s) for (int iy : s) for (int iz : s)
     verts[idx++] = obbVertex(A, ix, iy, iz);
@@ -338,7 +299,6 @@ void PhysicsWorldRB::contactsBoxTerrain(const RigidBoxBody& A, std::vector<Conta
     const Vec3& v = verts[i];
     const float h = terrainHeightAt(v.x, v.z);
     const float depth = h - v.y; // positive if below surface
-
     if (depth >= -skin) {
       Contact c;
       c.a = A.id;
@@ -352,11 +312,12 @@ void PhysicsWorldRB::contactsBoxTerrain(const RigidBoxBody& A, std::vector<Conta
   }
 }
 
-// Option B: box vs static triangle meshes (full vertices)
+// ------------------------------------------------------------
+// Contacts: box vs static triangle meshes (FIXED)
+// Key change: penetration-only, best triangle per corner, keep up to 8
+// ------------------------------------------------------------
 void PhysicsWorldRB::contactsBoxStaticMeshes(const RigidBoxBody& A, std::vector<Contact>& out) {
   if (m_staticMeshes.empty()) return;
-
-  const float skin = std::max(0.001f, contactSkin);
 
   Vec3 boxVerts[8];
   int idx = 0;
@@ -364,63 +325,88 @@ void PhysicsWorldRB::contactsBoxStaticMeshes(const RigidBoxBody& A, std::vector<
   for (int ix : s) for (int iy : s) for (int iz : s)
     boxVerts[idx++] = obbVertex(A, ix, iy, iz);
 
-  // Collect candidates and then keep only the deepest few to avoid solver noise.
   struct Cand { Contact c; };
   std::vector<Cand> cands;
-  cands.reserve(128);
+  cands.reserve(32);
 
-  for (const auto& mesh : m_staticMeshes) {
-    if (mesh.indices.size() < 3 || mesh.verts.empty()) continue;
+  // For each corner, find the deepest penetrating triangle contact (if any)
+  for (int vi = 0; vi < 8; ++vi) {
+    const Vec3& p = boxVerts[vi];
 
-    for (int vi = 0; vi < 8; ++vi) {
-      const Vec3& p = boxVerts[vi];
+    bool  hasBest = false;
+    float bestPen = 0.f;
+    Contact bestC;
+
+    for (const auto& mesh : m_staticMeshes) {
+      if (mesh.indices.size() < 3 || mesh.verts.empty()) continue;
 
       for (size_t ti = 0; ti + 2 < mesh.indices.size(); ti += 3) {
         const Vec3& a = mesh.verts[mesh.indices[ti+0]];
         const Vec3& b = mesh.verts[mesh.indices[ti+1]];
         const Vec3& c = mesh.verts[mesh.indices[ti+2]];
 
-        Vec3 n = cross(b - a, c - a);
+        Vec3 n = cross3(b - a, c - a);
         if (!safeNormalize(n)) continue;
 
         Vec3 cp = closestPointOnTri(p, a, b, c);
-        Vec3 d = p - cp;
 
-        float dist = dot3(d, n);
+        // Signed distance from triangle plane along its normal.
+        // If dist < 0, point is behind the face -> penetration (for that normal)
+        float dist = dot3(p - cp, n);
 
-        // Make normal point from triangle toward the point.
-        if (dist < 0.f) {
-          // p is behind n, so flip to push outward
-          n = n * -1.f;
-          dist = -dist;
-        }
+        // We want normal to push the box OUT of the triangle.
+        // If dist < 0 => penetration, keep n as is.
+        // If dist > 0 => not penetrating for this oriented normal.
+        if (dist >= 0.f) continue;
 
-        // If close enough (within skin) and penetrating/near
-        if (dist <= skin) {
-          float pen = skin - dist; // treat within skin as soft penetration band
-          if (pen <= 0.f) continue;
+        float pen = -dist;
 
-          Contact cc;
-          cc.a = A.id;
-          cc.b = 0;
-          cc.point = cp;
-          cc.normal = n;
-          cc.penetration = pen;
-          cands.push_back({cc});
+        // Small slop avoids micro jitter at exact contact
+        const float slop = 0.0025f;
+        if (pen <= slop) continue;
+        pen -= slop;
+
+        if (!hasBest || pen > bestPen) {
+          hasBest = true;
+          bestPen = pen;
+          bestC.a = A.id;
+          bestC.b = 0;
+          bestC.point = cp;
+          bestC.normal = n;
+          bestC.penetration = pen;
         }
       }
     }
+
+    if (hasBest) cands.push_back({bestC});
   }
 
   if (cands.empty()) return;
 
+  // Keep deepest contacts (more than 4 helps stacking stability)
   std::sort(cands.begin(), cands.end(), [](const Cand& x, const Cand& y){
     return x.c.penetration > y.c.penetration;
   });
 
-  const int keep = std::min<int>(4, (int)cands.size());
-  for (int i = 0; i < keep; ++i)
+  const int keep = std::min<int>(8, (int)cands.size());
+  for (int i=0;i<keep;++i)
     out.push_back(cands[(size_t)i].c);
+}
+
+// ------------------------------------------------------------
+// Contacts: box vs box (SAT + vertex-in-OBB fallback)
+// ------------------------------------------------------------
+static bool pointInOBB(const Vec3& p, const RigidBoxBody& b) {
+  Vec3 ax, ay, az;
+  computeOBBAxes(b, ax, ay, az);
+  Vec3 d = p - b.position;
+  float px = dot3(d, ax);
+  float py = dot3(d, ay);
+  float pz = dot3(d, az);
+  const float eps = 1e-4f;
+  return std::fabs(px) <= b.halfExtents.x + eps
+      && std::fabs(py) <= b.halfExtents.y + eps
+      && std::fabs(pz) <= b.halfExtents.z + eps;
 }
 
 void PhysicsWorldRB::contactsBoxBox(const RigidBoxBody& A, const RigidBoxBody& B, std::vector<Contact>& out) {
@@ -446,7 +432,6 @@ void PhysicsWorldRB::contactsBoxBox(const RigidBoxBody& A, const RigidBoxBody& B
   }
 
   if (pts.size() > 4) pts.resize(4);
-
   const float penEach = pen / (float)pts.size();
 
   for (const Vec3& p : pts) {
@@ -460,6 +445,9 @@ void PhysicsWorldRB::contactsBoxBox(const RigidBoxBody& A, const RigidBoxBody& B
   }
 }
 
+// ------------------------------------------------------------
+// Gather
+// ------------------------------------------------------------
 void PhysicsWorldRB::gatherContacts(std::vector<Contact>& out) {
   out.clear();
   out.reserve(256);
@@ -470,6 +458,7 @@ void PhysicsWorldRB::gatherContacts(std::vector<Contact>& out) {
     if (enableTerrain) contactsBoxTerrain(b, out);
     if (enableGround)  contactsBoxGround(b, out);
 
+    // Option B static triangle meshes
     contactsBoxStaticMeshes(b, out);
   }
 
@@ -483,32 +472,28 @@ void PhysicsWorldRB::gatherContacts(std::vector<Contact>& out) {
   }
 }
 
-// ============================================================
+// ------------------------------------------------------------
 // Solver
-// ============================================================
+// ------------------------------------------------------------
 void PhysicsWorldRB::solveVelocity(const Contact& c) {
   RigidBoxBody* A = get(c.a);
   if (!A) return;
-
-  const bool hasB = (c.b != 0);
-  RigidBoxBody* B = hasB ? get(c.b) : nullptr;
+  RigidBoxBody* B = (c.b != 0) ? get(c.b) : nullptr;
 
   Vec3 n = c.normal;
-  float n2 = dot3(n, n);
-  if (!finite1(n2) || n2 < 1e-12f) return;
-  n = n * (1.0f / std::sqrt(n2));
+  if (!safeNormalize(n)) return;
 
   Vec3 ra = c.point - A->position;
-  Vec3 va = A->linearVelocity + cross(A->angularVelocity, ra);
+  Vec3 va = A->linearVelocity + cross3(A->angularVelocity, ra);
 
-  Vec3 vb{0,0,0};
   Vec3 rb{0,0,0};
+  Vec3 vb{0,0,0};
   float invMassB = 0.f;
   Mat3 invIBw{};
 
   if (B) {
     rb = c.point - B->position;
-    vb = B->linearVelocity + cross(B->angularVelocity, rb);
+    vb = B->linearVelocity + cross3(B->angularVelocity, rb);
     invMassB = B->invMass;
     invIBw = invInertiaWorld(*B);
   }
@@ -519,51 +504,50 @@ void PhysicsWorldRB::solveVelocity(const Contact& c) {
 
   Mat3 invIAw = invInertiaWorld(*A);
 
-  Vec3 raXn = cross(ra, n);
+  Vec3 raXn = cross3(ra, n);
   Vec3 termA = mat3Mul(invIAw, raXn);
-  float kA = A->invMass + dot3(cross(termA, ra), n);
+  float kA = A->invMass + dot3(cross3(termA, ra), n);
 
   float kB = 0.f;
   if (B) {
-    Vec3 rbXn = cross(rb, n);
+    Vec3 rbXn = cross3(rb, n);
     Vec3 termB = mat3Mul(invIBw, rbXn);
-    kB = invMassB + dot3(cross(termB, rb), n);
+    kB = invMassB + dot3(cross3(termB, rb), n);
   }
 
   float denom = kA + kB;
-  if (!finite1(denom) || denom <= 1e-8f) return;
+  if (!std::isfinite(denom) || denom <= 1e-8f) return;
 
   const float e = (std::fabs(vn) < 1.0f) ? 0.0f : restitution;
-
   float j = -(1.f + e) * vn / denom;
-  if (!finite1(j)) return;
+  if (!std::isfinite(j)) return;
 
-  const float maxJ = 80.0f;
-  if (j > maxJ) j = maxJ;
+  // clamp
+  if (j > 80.0f) j = 80.0f;
 
   Vec3 impulse = n * j;
 
   applyImpulse(*A, impulse, ra);
   if (B) applyImpulse(*B, impulse * -1.f, rb);
 
-  // Friction
-  rv = (A->linearVelocity + cross(A->angularVelocity, ra))
-     - (B ? (B->linearVelocity + cross(B->angularVelocity, rb)) : Vec3(0,0,0));
+  // friction
+  rv = (A->linearVelocity + cross3(A->angularVelocity, ra))
+     - (B ? (B->linearVelocity + cross3(B->angularVelocity, rb)) : Vec3(0,0,0));
 
   Vec3 t = rv - n * dot3(rv, n);
   float t2 = len2(t);
   if (t2 > 1e-10f) {
     t = t * (1.f / std::sqrt(t2));
 
-    Vec3 raXt = cross(ra, t);
+    Vec3 raXt = cross3(ra, t);
     Vec3 termAt = mat3Mul(invIAw, raXt);
-    float ktA = A->invMass + dot3(cross(termAt, ra), t);
+    float ktA = A->invMass + dot3(cross3(termAt, ra), t);
 
     float ktB = 0.f;
     if (B) {
-      Vec3 rbXt = cross(rb, t);
+      Vec3 rbXt = cross3(rb, t);
       Vec3 termBt = mat3Mul(invIBw, rbXt);
-      ktB = invMassB + dot3(cross(termBt, rb), t);
+      ktB = invMassB + dot3(cross3(termBt, rb), t);
     }
 
     float denomT = ktA + ktB;
@@ -571,18 +555,13 @@ void PhysicsWorldRB::solveVelocity(const Contact& c) {
       float jt = -dot3(rv, t) / denomT;
 
       float maxF = friction * std::max(j, 0.5f);
-      if (jt >  maxF) jt =  maxF;
-      if (jt < -maxF) jt = -maxF;
+      jt = clampf(jt, -maxF, maxF);
 
       Vec3 impT = t * jt;
       applyImpulse(*A, impT, ra);
       if (B) applyImpulse(*B, impT * -1.f, rb);
     }
   }
-
-  A->asleep = false;
-  A->sleepTimer = 0.f;
-  if (B) { B->asleep = false; B->sleepTimer = 0.f; }
 }
 
 void PhysicsWorldRB::solvePosition(const Contact& c) {
@@ -590,16 +569,15 @@ void PhysicsWorldRB::solvePosition(const Contact& c) {
   if (!A) return;
   RigidBoxBody* B = (c.b != 0) ? get(c.b) : nullptr;
 
-  const float slop = 0.008f;
+  Vec3 n = c.normal;
+  if (!safeNormalize(n)) return;
+
+  // gentle correction
+  const float slop = 0.006f;
   const float percent = 0.18f;
 
   float pen = c.penetration - slop;
   if (pen <= 0.f) return;
-
-  Vec3 n = c.normal;
-  float n2 = dot3(n, n);
-  if (!finite1(n2) || n2 < 1e-12f) return;
-  n = n * (1.0f / std::sqrt(n2));
 
   float wA = A->invMass;
   float wB = B ? B->invMass : 0.f;
@@ -608,7 +586,8 @@ void PhysicsWorldRB::solvePosition(const Contact& c) {
 
   Vec3 corr = n * (percent * pen / wSum);
 
-  const float maxCorr = 0.12f;
+  // clamp correction
+  const float maxCorr = 0.10f;
   float c2 = len2(corr);
   if (c2 > maxCorr * maxCorr) {
     corr = corr * (maxCorr / std::sqrt(c2));
@@ -618,9 +597,9 @@ void PhysicsWorldRB::solvePosition(const Contact& c) {
   if (B && B->isDynamic()) B->position = B->position - corr * wB;
 }
 
-// ============================================================
-// Sleeping (improved settling)
-// ============================================================
+// ------------------------------------------------------------
+// Sleeping (less “freeze in weird pose”)
+// ------------------------------------------------------------
 void PhysicsWorldRB::updateSleeping(RigidBoxBody& b, float h, bool supported) {
   if (!b.isDynamic()) return;
 
@@ -636,22 +615,10 @@ void PhysicsWorldRB::updateSleeping(RigidBoxBody& b, float h, bool supported) {
   const float vThresh2 = b.sleepVel * b.sleepVel;
   const float wThresh2 = b.sleepAngVel * b.sleepAngVel;
 
-  // Supported bodies accumulate sleep faster (stops corner creeping)
-  const float sleepBoost = 2.0f;
+  const float sleepBoost = 1.8f;
 
   if (lv2 < vThresh2 && av2 < wThresh2) {
     b.sleepTimer += h * sleepBoost;
-
-    // If we're very close to rest, hard-clamp tiny residuals.
-    if (lv2 < (0.5f*b.sleepVel)*(0.5f*b.sleepVel)) {
-      b.linearVelocity.x = 0.f;
-      b.linearVelocity.y = 0.f;
-      b.linearVelocity.z = 0.f;
-    }
-    if (av2 < (0.5f*b.sleepAngVel)*(0.5f*b.sleepAngVel)) {
-      b.angularVelocity = Vec3(0,0,0);
-    }
-
     if (b.sleepTimer >= b.sleepTime) {
       b.asleep = true;
       b.linearVelocity = Vec3(0,0,0);
@@ -663,16 +630,15 @@ void PhysicsWorldRB::updateSleeping(RigidBoxBody& b, float h, bool supported) {
   }
 }
 
-// ============================================================
-// Player collision (unchanged except your push gating stays elsewhere)
-// ============================================================
+// ------------------------------------------------------------
+// Player collision (keep your more-reliable push gate)
+// ------------------------------------------------------------
 bool PhysicsWorldRB::collidePlayerSphere(Vec3& center, float radius, Vec3& playerVel, bool* outGrounded) {
   bool hit = false;
   bool grounded = false;
 
   Vec3 playerVelIn = playerVel;
 
-  // collide vs dynamic boxes
   for (auto& b : m_bodies) {
     if (!b.isDynamic()) continue;
 
@@ -706,17 +672,14 @@ bool PhysicsWorldRB::collidePlayerSphere(Vec3& center, float radius, Vec3& playe
     float vn = dot3(playerVel, nRes);
     if (vn < 0.f) playerVel -= nRes * vn;
 
-    // push box (horizontal-ish)
     Vec3 nh(nRaw.x, 0.0f, nRaw.z);
     if (safeNormalize(nh)) {
-      if (std::fabs(nRaw.y) < 0.85f) { // your more-reliable push gate
+      if (std::fabs(nRaw.y) < 0.85f) {
         float vInto = -dot3(playerVelIn, nh);
         if (vInto > 0.f) {
           float j = 70.0f * vInto;
           if (j > 22.0f) j = 22.0f;
           applyImpulse(b, nh * (-j), Vec3(0,0,0));
-          b.asleep = false;
-          b.sleepTimer = 0.f;
         }
       }
     }
@@ -725,7 +688,6 @@ bool PhysicsWorldRB::collidePlayerSphere(Vec3& center, float radius, Vec3& playe
     hit = true;
   }
 
-  // collide vs terrain
   if (enableTerrain && m_terrainHeightFn) {
     const float h = terrainHeightAt(center.x, center.z);
     Vec3 n = terrainNormalAt(center.x, center.z);
@@ -737,14 +699,13 @@ bool PhysicsWorldRB::collidePlayerSphere(Vec3& center, float radius, Vec3& playe
     if (pen > 0.f) {
       center = center + n * pen;
       hit = true;
-      if (n.y >= kSupportNMin) grounded = true;
+      if (n.y > 0.75f) grounded = true;
 
       float vn = dot3(playerVel, n);
       if (vn < 0.f) playerVel = playerVel - n * vn;
     }
   }
 
-  // legacy plane
   if (enableGround) {
     float bottom = center.y - radius;
     if (bottom < groundY) {
@@ -760,9 +721,9 @@ bool PhysicsWorldRB::collidePlayerSphere(Vec3& center, float radius, Vec3& playe
   return hit;
 }
 
-// ============================================================
-// Stepping
-// ============================================================
+// ------------------------------------------------------------
+// Step
+// ------------------------------------------------------------
 void PhysicsWorldRB::substep(float h) {
   for (auto& b : m_bodies) {
     integrate(b, h);
@@ -778,10 +739,10 @@ void PhysicsWorldRB::substep(float h) {
   for (int it=0; it<positionIters; ++it)
     for (const auto& c : contacts) solvePosition(c);
 
-  // Determine support
+  // supported detection: any contact with a "ground-ish" normal
   std::vector<uint8_t> supported(m_bodies.size(), 0);
   for (const auto& c : contacts) {
-    if (c.normal.y < kSupportNMin) continue;
+    if (c.normal.y < 0.75f) continue;
     for (size_t i=0;i<m_bodies.size();++i) {
       if (m_bodies[i].id == c.a) { supported[i] = 1; break; }
     }
