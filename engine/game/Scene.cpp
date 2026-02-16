@@ -15,23 +15,18 @@
   #include <GL/gl.h>
 #endif
 
-static bool fe_isfinite3(const Vec3& v) {
-  return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z);
-}
-static bool fe_isfiniteQuat(const fe::Quat& q) {
-  return std::isfinite(q.w) && std::isfinite(q.x) &&
-         std::isfinite(q.y) && std::isfinite(q.z);
-}
-static bool fe_isfiniteRigidBody(const fe::RigidBoxBody& b) {
-  return fe_isfinite3(b.position)
-      && fe_isfinite3(b.halfExtents)
-      && fe_isfiniteQuat(b.orientation);
-}
 static fe::Quat IdentityQuat() {
   fe::Quat q; q.w = 1.f; q.x = q.y = q.z = 0.f; return q;
 }
 
-// --- Terrain params (bigger hills so you can clearly ascend) ---
+static void UnpackRGBA(uint32_t rgba, float& r, float& g, float& b, float& a) {
+  r = float((rgba >> 24) & 0xFF) / 255.f;
+  g = float((rgba >> 16) & 0xFF) / 255.f;
+  b = float((rgba >>  8) & 0xFF) / 255.f;
+  a = float((rgba >>  0) & 0xFF) / 255.f;
+}
+
+// --- Terrain params (bigger hills) ---
 static constexpr float kTerrainSizeX = 80.0f;
 static constexpr float kTerrainSizeZ = 80.0f;
 static constexpr float kTerrainStep  = 1.0f;
@@ -88,7 +83,6 @@ static Vec3 TerrainSampleNormalFromMesh(const engine::geom::TerrainGrid& t, floa
   float dhdz = (hU - hD) / (2.0f * e);
 
   Vec3 n(-dhdx, 1.0f, -dhdz);
-
   float l2 = n.x*n.x + n.y*n.y + n.z*n.z;
   if (l2 < 1e-12f) return Vec3(0.f, 1.f, 0.f);
   float inv = 1.0f / std::sqrt(l2);
@@ -99,21 +93,12 @@ static float TerrainHeightCB(void* user, float x, float z) {
   auto* t = (engine::geom::TerrainGrid*)user;
   return t ? TerrainSampleHeightFromMesh(*t, x, z) : -1e30f;
 }
-
 static Vec3 TerrainNormalCB(void* user, float x, float z) {
   auto* t = (engine::geom::TerrainGrid*)user;
   return t ? TerrainSampleNormalFromMesh(*t, x, z) : Vec3(0.f, 1.f, 0.f);
 }
 
-// --- Color unpack ---
-static void UnpackRGBA(uint32_t rgba, float& r, float& g, float& b, float& a) {
-  r = float((rgba >> 24) & 0xFF) / 255.f;
-  g = float((rgba >> 16) & 0xFF) / 255.f;
-  b = float((rgba >>  8) & 0xFF) / 255.f;
-  a = float((rgba >>  0) & 0xFF) / 255.f;
-}
-
-// --- CPU transform into VertexPC and draw via RenderMesh ---
+// --- Render helper (CPU transform into VertexPC then RenderMesh) ---
 template <typename V>
 static void DrawTransformedMeshRGBA(
   const std::vector<V>& localVerts,
@@ -154,6 +139,29 @@ static void DrawTransformedMeshRGBA(
 #endif
 }
 
+// --- Build a static triangle mesh from a ColoredBox (full vertices/triangles) ---
+template <typename V>
+static fe::StaticTriMesh BuildStaticTriMesh(
+  const std::vector<V>& localVerts,
+  const std::vector<uint32_t>& localInds,
+  const Vec3& pos,
+  const fe::Quat& rot,
+  const Vec3& scale
+) {
+  fe::StaticTriMesh m;
+  m.verts.reserve(localVerts.size());
+  m.indices = localInds;
+
+  const fe::Quat qn = fe::quatNormalize(rot);
+
+  for (const auto& v : localVerts) {
+    Vec3 pLocal(v.x * scale.x, v.y * scale.y, v.z * scale.z);
+    Vec3 pWorld = pos + fe::quatRotate(qn, pLocal);
+    m.verts.push_back(pWorld);
+  }
+  return m;
+}
+
 // --- Cached unit meshes ---
 static const engine::geom::ColoredBox& UnitCrateBox() {
   static engine::geom::ColoredBox box =
@@ -168,7 +176,6 @@ static const engine::geom::ColoredBox& UnitCrateBox() {
     );
   return box;
 }
-
 static const engine::geom::ColoredBox& UnitPlatformBox() {
   static engine::geom::ColoredBox box =
     engine::geom::ColoredBox::make(
@@ -183,7 +190,6 @@ static const engine::geom::ColoredBox& UnitPlatformBox() {
   return box;
 }
 
-// --- Scene object lifecycle ---
 GameObject* Scene::createObject() {
   auto obj = std::make_unique<GameObject>();
   GameObject* out = obj.get();
@@ -192,20 +198,9 @@ GameObject* Scene::createObject() {
 }
 
 void Scene::rebuildStaticAABBs() {
+  // Kept only so other code that expects it doesn’t break,
+  // but platform collision is now handled via static triangle meshes.
   m_static.clear();
-  m_static.reserve(m_objects.size());
-
-  for (auto& o : m_objects) {
-    if (!o || !o->hasBoxCollider()) continue;
-
-    const Vec3 he = o->boxHalfExtents();
-    fe::AABB a;
-    a.min = o->position - he;
-    a.max = o->position + he;
-    m_static.push_back(a);
-  }
-
-  m_rb.setStaticAABBs(m_static);
 }
 
 template <typename RB>
@@ -218,13 +213,13 @@ static void SpawnCrates(RB& rb) {
 void Scene::init() {
   m_objects.clear();
 
-  // Build terrain once (render + physics sample from mesh verts)
+  // Terrain
   m_terrain = engine::geom::TerrainGrid::make(
     kTerrainSizeX, kTerrainSizeZ, kTerrainStep,
     kTerrainBaseY, kTerrainAmp
   );
 
-  // platforms — now placed ON TOP of terrain height at their (x,z)
+  // Platforms (placed on terrain)
   {
     auto* p = createObject();
     const Vec3 he(2.0f, 0.15f, 2.0f);
@@ -252,10 +247,25 @@ void Scene::init() {
 
   rebuildStaticAABBs();
 
-  // physics tuning
+  // Build static triangle meshes from platforms (full vertices)
+  std::vector<fe::StaticTriMesh> staticMeshes;
+  staticMeshes.reserve(m_objects.size());
+
+  const auto& platformUnit = UnitPlatformBox();
+  for (auto& o : m_objects) {
+    if (!o || !o->hasBoxCollider()) continue;
+    const Vec3 he = o->boxHalfExtents();
+
+    // Identity rotation for platforms for now (if you add rotation later, pass it here)
+    staticMeshes.push_back(BuildStaticTriMesh(platformUnit.vertices, platformUnit.indices,
+                                             o->position, IdentityQuat(), he));
+  }
+  m_rb.setStaticMeshes(staticMeshes);
+
+  // Physics tuning
   m_rb.gravity = Vec3(0.f, -18.0f, 0.f);
 
-  // Terrain is the floor now (NO legacy plane)
+  // Terrain is the floor now
   m_rb.enableGround = false;
   m_rb.setTerrainCallbacks(&TerrainHeightCB, &TerrainNormalCB, &m_terrain);
 
@@ -287,11 +297,10 @@ bool Scene::getPlayerSphere(Vec3& outCenter, Vec3& outVelocity, bool& outGrounde
 void Scene::update(float dt) {
   static float s_accum = 0.0f;
 
-  for (auto& obj : m_objects) {
+  for (auto& obj : m_objects)
     if (obj) obj->update(dt);
-  }
 
-  rebuildStaticAABBs();
+  // (If platforms move later, rebuild staticMeshes here.)
 
   if (dt < 0.f) dt = 0.f;
 
@@ -309,22 +318,12 @@ void Scene::update(float dt) {
     steps++;
   }
 
-  // non-finite guard
-  const auto& bodies = m_rb.bodies();
-  for (int i = 0; i < (int)bodies.size() && i < 3; ++i) {
-    if (!fe_isfiniteRigidBody(bodies[i])) {
-      std::printf("[physics] non-finite rigid body detected\n");
-      break;
-    }
-  }
-
   m_playerCenterOut = m_playerCenter;
   m_playerVelOut = m_playerVel;
   m_playerGroundedOut = false;
 
-  if (m_playerValid) {
+  if (m_playerValid)
     (void)m_rb.collidePlayerSphere(m_playerCenterOut, m_playerRadius, m_playerVelOut, &m_playerGroundedOut);
-  }
 }
 
 void Scene::render(const Mat4& view, const Mat4& proj) {
@@ -349,7 +348,7 @@ void Scene::renderDebug(const Mat4& view, const Mat4& proj) {
   glDisable(GL_TEXTURE_2D);
   glEnable(GL_DEPTH_TEST);
 
-  // --- Terrain ---
+  // Terrain
   {
     std::vector<engine::render::VertexPC> tv;
     tv.reserve(m_terrain.vertices.size());
@@ -372,26 +371,23 @@ void Scene::renderDebug(const Mat4& view, const Mat4& proj) {
     tm.Draw();
   }
 
-  // --- Platforms ---
+  // Platforms (rendered)
   {
     const auto& unit = UnitPlatformBox();
-    for (const auto& a : m_static) {
-      Vec3 center = (a.min + a.max) * 0.5f;
-      Vec3 half   = (a.max - a.min) * 0.5f;
-
+    for (auto& o : m_objects) {
+      if (!o || !o->hasBoxCollider()) continue;
+      const Vec3 he = o->boxHalfExtents();
       DrawTransformedMeshRGBA(unit.vertices, unit.indices,
-                              center, IdentityQuat(), half,
-                              true);
+                              o->position, IdentityQuat(), he, true);
     }
   }
 
-  // --- Crates ---
+  // Crates (rendered)
   {
     const auto& unit = UnitCrateBox();
     for (const auto& b : m_rb.bodies()) {
       DrawTransformedMeshRGBA(unit.vertices, unit.indices,
-                              b.position, b.orientation, b.halfExtents,
-                              true);
+                              b.position, b.orientation, b.halfExtents, true);
     }
   }
 #else
