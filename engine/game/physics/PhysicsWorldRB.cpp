@@ -749,7 +749,7 @@ bool PhysicsWorldRB::collidePlayerSphere(Vec3& center, float radius, Vec3& playe
     // push box (horizontal)
     Vec3 nh(nRaw.x, 0.0f, nRaw.z);
     if (safeNormalize(nh)) {
-      if (std::fabs(nRaw.y) < 0.65f) {
+      if (std::fabs(nRaw.y) < 0.85f) {
         float vInto = -dot3(playerVelIn, nh);
         if (vInto > 0.f) {
           float j = 70.0f * vInto;
