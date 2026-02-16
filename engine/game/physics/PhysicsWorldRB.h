@@ -12,8 +12,10 @@ struct Contact {
   uint32_t b = 0; // 0 => static world (AABB or ground)
 
   Vec3 point{0.f,0.f,0.f};   // world
-  Vec3 normal{0.f,1.f,0.f};  // from A toward B (or out of static)
-  float penetration = 0.f;   // >=0 penetration depth. (We also allow 0 in "skin" band)
+  // IMPORTANT: normal points from "other" (B or static) toward A.
+  // This matches the solver's convention (impulse applied to A along +n).
+  Vec3 normal{0.f,1.f,0.f};
+  float penetration = 0.f;   // >=0. Can be 0 in the contact-skin band.
 };
 
 class PhysicsWorldRB {
@@ -26,7 +28,8 @@ public:
   float restitution = 0.0f;
   float friction = 0.6f;
 
-  // Contact skin helps resting friction + sleeping (objects can "touch" without penetrating)
+  // Contact skin: generate contacts even when very slightly above the surface.
+  // Needed for friction + sleeping to work at rest.
   float contactSkin = 0.06f;
 
   float fixedDt = 1.f/120.f;
@@ -76,7 +79,8 @@ private:
   Mat3 invInertiaWorld(const RigidBoxBody& b) const;
   void applyImpulse(RigidBoxBody& b, const Vec3& impulse, const Vec3& r);
 
-  void updateSleeping(RigidBoxBody& b, float h);
+  // supported=true => allowed to sleep (prevents sleeping in midair)
+  void updateSleeping(RigidBoxBody& b, float h, bool supported);
 };
 
 } // namespace fe
