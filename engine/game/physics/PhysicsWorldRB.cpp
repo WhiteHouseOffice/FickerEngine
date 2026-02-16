@@ -130,7 +130,7 @@ static bool satOBBOBB(const RigidBoxBody& A, const RigidBoxBody& B, Vec3& outN, 
 
     if (pen < bestPen) {
       bestPen = pen;
-      // normal from B -> A
+      // want normal from B -> A
       bestAxis = (dot3(d, a) > 0.f) ? (a * -1.f) : a;
     }
   }
@@ -265,6 +265,9 @@ void PhysicsWorldRB::applyDamping(RigidBoxBody& b, float h) {
 
 // ------------------------------------------------------------
 // Contacts: ground + terrain
+// Important: use a skin band for CONTACT GENERATION, but only
+// use positive penetration for POSITION correction.
+// This avoids "floating / drifting sideways" from position solver.
 // ------------------------------------------------------------
 void PhysicsWorldRB::contactsBoxGround(const RigidBoxBody& A, std::vector<Contact>& out) {
   const float skin = std::max(0.001f, contactSkin);
@@ -282,6 +285,7 @@ void PhysicsWorldRB::contactsBoxGround(const RigidBoxBody& A, std::vector<Contac
 
   if (minY > groundY + skin) return;
 
+  // emit up to 4 bottom vertices near minY
   int emitted = 0;
   const float nearMin = minY + 0.02f;
   for (int i=0;i<8 && emitted<4;i++) {
@@ -313,30 +317,39 @@ void PhysicsWorldRB::contactsBoxTerrain(const RigidBoxBody& A, std::vector<Conta
   for (int i=0;i<8 && emitted<4;i++) {
     const Vec3& v = verts[i];
     const float h = terrainHeightAt(v.x, v.z);
-    const float depth = h - v.y; // positive if below
+    const float depth = h - v.y; // + if below surface
 
-    // CRITICAL: skin band contact, not penetration-only
-    if (depth >= -skin) {
-      Contact c;
-      c.a = A.id;
-      c.b = 0;
-      c.point = Vec3(v.x, h, v.z);
-      c.normal = terrainNormalAt(v.x, v.z);
-      c.penetration = std::max(0.f, depth);
-      out.push_back(c);
-      emitted++;
-    }
+    if (depth < -skin) continue;
+
+    Contact c;
+    c.a = A.id;
+    c.b = 0;
+    c.point = Vec3(v.x, h, v.z);
+
+    Vec3 n = terrainNormalAt(v.x, v.z);
+    if (!safeNormalize(n)) n = Vec3(0,1,0);
+    // snap almost-flat to pure up (prevents "always drifting left")
+    if (n.y > 0.95f) n = Vec3(0,1,0);
+    c.normal = n;
+
+    c.penetration = std::max(0.f, depth);
+    out.push_back(c);
+    emitted++;
   }
 }
 
 // ------------------------------------------------------------
-// Contacts: box vs static triangle meshes (skin band + best per corner)
+// Contacts: box vs static triangle meshes (Option B)
+// Similar philosophy:
+// - create contacts in a skin band (for friction / resting stability),
+// - but set penetration = max(0, -dist) so position solver never "lifts"
+//   or injects sideways motion when merely close to the surface.
+// - keep <= 8 contacts (best per corner).
 // ------------------------------------------------------------
 void PhysicsWorldRB::contactsBoxStaticMeshes(const RigidBoxBody& A, std::vector<Contact>& out) {
   if (m_staticMeshes.empty()) return;
 
   const float skin = std::max(0.001f, contactSkin);
-  const float slop = 0.0025f;
 
   Vec3 boxVerts[8];
   int idx = 0;
@@ -344,80 +357,78 @@ void PhysicsWorldRB::contactsBoxStaticMeshes(const RigidBoxBody& A, std::vector<
   for (int ix : s) for (int iy : s) for (int iz : s)
     boxVerts[idx++] = obbVertex(A, ix, iy, iz);
 
-  struct Cand { Contact c; };
-  std::vector<Cand> cands;
-  cands.reserve(16);
+  struct Best {
+    bool  has = false;
+    float bestDist = 1e30f; // smaller is better (more penetrating / closer)
+    Contact c{};
+  };
+  Best best[8];
 
-  for (int vi = 0; vi < 8; ++vi) {
-    const Vec3& p = boxVerts[vi];
+  for (const auto& mesh : m_staticMeshes) {
+    if (mesh.indices.size() < 3 || mesh.verts.empty()) continue;
 
-    bool  hasBest = false;
-    float bestPen = 0.f;
-    Contact bestC;
+    for (size_t ti = 0; ti + 2 < mesh.indices.size(); ti += 3) {
+      const Vec3& a = mesh.verts[mesh.indices[ti+0]];
+      const Vec3& b = mesh.verts[mesh.indices[ti+1]];
+      const Vec3& c = mesh.verts[mesh.indices[ti+2]];
 
-    for (const auto& mesh : m_staticMeshes) {
-      if (mesh.indices.size() < 3 || mesh.verts.empty()) continue;
+      // meshes are CW for rendering -> flip
+      Vec3 n = cross3(b - a, c - a) * -1.f;
+      if (!safeNormalize(n)) continue;
 
-      for (size_t ti = 0; ti + 2 < mesh.indices.size(); ti += 3) {
-        const Vec3& a = mesh.verts[mesh.indices[ti+0]];
-        const Vec3& b = mesh.verts[mesh.indices[ti+1]];
-        const Vec3& c = mesh.verts[mesh.indices[ti+2]];
+      // make it outward/upward-ish (we mainly use these as floors/platforms)
+      if (n.y < 0.f) n = n * -1.f;
+      if (n.y < 0.15f) continue;
+      if (n.y > 0.95f) n = Vec3(0,1,0);
 
-        // Your RenderMesh uses CW; keep consistent:
-        // cross(b-a, c-a) would be CCW normal -> flip for CW
-        Vec3 n = cross3(b - a, c - a) * -1.f;
-        if (!safeNormalize(n)) continue;
-
-        // Prefer floor-ish triangles for platform tops.
-        // (Keeps side faces from dominating)
-        if (n.y < 0.f) n = n * -1.f;
-        if (n.y < 0.25f) continue;
-
+      for (int vi = 0; vi < 8; ++vi) {
+        const Vec3& p = boxVerts[vi];
         Vec3 cp = closestPointOnTri(p, a, b, c);
-        float dist = dot3(p - cp, n);
 
-        // SKIN BAND: accept within skin above surface
+        float dist = dot3(p - cp, n); // + above, - penetrating
         if (dist > skin) continue;
 
-        float pen = (skin - dist) - slop;
-        if (pen <= 0.f) continue;
+        // prefer the most "supporting" triangle for this corner:
+        // smallest dist (most negative), tiebreaker higher n.y.
+        bool better = false;
+        if (!best[vi].has) {
+          better = true;
+        } else if (dist < best[vi].bestDist - 1e-5f) {
+          better = true;
+        } else if (std::fabs(dist - best[vi].bestDist) <= 1e-5f && n.y > best[vi].c.normal.y + 1e-4f) {
+          better = true;
+        }
 
-        // Clamp to avoid teleport spirals if something goes deep
-        if (pen > 0.25f) pen = 0.25f;
+        if (better) {
+          best[vi].has = true;
+          best[vi].bestDist = dist;
 
-        if (!hasBest || pen > bestPen) {
-          hasBest = true;
-          bestPen = pen;
-          bestC.a = A.id;
-          bestC.b = 0;
-          bestC.point = cp;
-          bestC.normal = n;
-          bestC.penetration = pen;
+          Contact cc;
+          cc.a = A.id;
+          cc.b = 0;
+          cc.point = cp;
+          cc.normal = n;
+          cc.penetration = std::max(0.f, -dist);
+          best[vi].c = cc;
         }
       }
     }
-
-    if (hasBest) cands.push_back({bestC});
   }
 
-  if (cands.empty()) return;
-
-  std::sort(cands.begin(), cands.end(), [](const Cand& x, const Cand& y){
-    return x.c.penetration > y.c.penetration;
-  });
-
-  const int keep = std::min<int>(8, (int)cands.size());
-  for (int i=0;i<keep;++i) out.push_back(cands[(size_t)i].c);
+  for (int vi = 0; vi < 8; ++vi)
+    if (best[vi].has) out.push_back(best[vi].c);
 }
 
 // ------------------------------------------------------------
 // Contacts: box vs box
+// - SAT gives normal + penetration
+// - If mostly vertical, emit 4 bottom-face contacts for stable stacking
 // ------------------------------------------------------------
 void PhysicsWorldRB::contactsBoxBox(const RigidBoxBody& A, const RigidBoxBody& B, std::vector<Contact>& out) {
   Vec3 n; float pen;
   if (!satOBBOBB(A, B, n, pen)) return;
 
-  // If mostly vertical, emit 4 bottom-face contacts for stable stacking
+  // Stronger manifold for stacking (vertical-ish normal)
   if (std::fabs(n.y) > 0.70f) {
     const RigidBoxBody& Top = (n.y > 0.f) ? A : B;
 
@@ -450,13 +461,13 @@ void PhysicsWorldRB::contactsBoxBox(const RigidBoxBody& A, const RigidBoxBody& B
   std::vector<Vec3> pts;
   pts.reserve(16);
 
-  const int s3[2] = {-1, 1};
+  const int s[2] = {-1, 1};
 
-  for (int ix: s3) for (int iy: s3) for (int iz: s3) {
+  for (int ix: s) for (int iy: s) for (int iz: s) {
     Vec3 v = obbVertex(A, ix, iy, iz);
     if (pointInOBB(v, B)) pts.push_back(v);
   }
-  for (int ix: s3) for (int iy: s3) for (int iz: s3) {
+  for (int ix: s) for (int iy: s) for (int iz: s) {
     Vec3 v = obbVertex(B, ix, iy, iz);
     if (pointInOBB(v, A)) pts.push_back(v);
   }
@@ -587,6 +598,8 @@ void PhysicsWorldRB::solveVelocity(const Contact& c) {
     if (denomT > 1e-8f) {
       float jt = -dot3(rv, t) / denomT;
 
+      // Give friction some "grip" even for tiny normal impulses,
+      // otherwise resting bodies can drift forever on micro-slopes.
       float maxF = friction * std::max(j, 0.5f);
       jt = clampf(jt, -maxF, maxF);
 
@@ -598,6 +611,9 @@ void PhysicsWorldRB::solveVelocity(const Contact& c) {
 }
 
 void PhysicsWorldRB::solvePosition(const Contact& c) {
+  // Only correct actual penetration.
+  if (c.penetration <= 0.f) return;
+
   RigidBoxBody* A = get(c.a);
   if (!A) return;
   RigidBoxBody* B = (c.b != 0) ? get(c.b) : nullptr;
@@ -605,8 +621,9 @@ void PhysicsWorldRB::solvePosition(const Contact& c) {
   Vec3 n = c.normal;
   if (!safeNormalize(n)) return;
 
+  // gentle correction
   const float slop = 0.006f;
-  const float percent = 0.10f;
+  const float percent = 0.12f;
 
   float pen = c.penetration - slop;
   if (pen <= 0.f) return;
@@ -618,7 +635,8 @@ void PhysicsWorldRB::solvePosition(const Contact& c) {
 
   Vec3 corr = n * (percent * pen / wSum);
 
-  const float maxCorr = 0.05f;
+  // clamp correction (prevents teleport loops)
+  const float maxCorr = 0.07f;
   float c2 = len2(corr);
   if (c2 > maxCorr * maxCorr) {
     corr = corr * (maxCorr / std::sqrt(c2));
@@ -646,7 +664,7 @@ void PhysicsWorldRB::updateSleeping(RigidBoxBody& b, float h, bool supported) {
   const float vThresh2 = b.sleepVel * b.sleepVel;
   const float wThresh2 = b.sleepAngVel * b.sleepAngVel;
 
-  const float sleepBoost = 1.8f;
+  const float sleepBoost = 1.6f;
 
   if (lv2 < vThresh2 && av2 < wThresh2) {
     b.sleepTimer += h * sleepBoost;
@@ -662,7 +680,10 @@ void PhysicsWorldRB::updateSleeping(RigidBoxBody& b, float h, bool supported) {
 }
 
 // ------------------------------------------------------------
-// Player collision
+// Player collision (kinematic sphere)
+// - dynamic boxes
+// - static meshes (platforms)
+// - terrain + ground
 // ------------------------------------------------------------
 bool PhysicsWorldRB::collidePlayerSphere(Vec3& center, float radius, Vec3& playerVel, bool* outGrounded) {
   bool hit = false;
@@ -670,6 +691,7 @@ bool PhysicsWorldRB::collidePlayerSphere(Vec3& center, float radius, Vec3& playe
 
   Vec3 playerVelIn = playerVel;
 
+  // dynamic boxes
   for (auto& b : m_bodies) {
     if (!b.isDynamic()) continue;
 
@@ -720,10 +742,49 @@ bool PhysicsWorldRB::collidePlayerSphere(Vec3& center, float radius, Vec3& playe
     hit = true;
   }
 
+  // static meshes (platforms)
+  if (!m_staticMeshes.empty()) {
+    const float skin = std::max(0.001f, contactSkin);
+    for (const auto& mesh : m_staticMeshes) {
+      if (mesh.indices.size() < 3 || mesh.verts.empty()) continue;
+
+      for (size_t ti = 0; ti + 2 < mesh.indices.size(); ti += 3) {
+        const Vec3& a = mesh.verts[mesh.indices[ti+0]];
+        const Vec3& b = mesh.verts[mesh.indices[ti+1]];
+        const Vec3& c = mesh.verts[mesh.indices[ti+2]];
+
+        Vec3 n = cross3(b - a, c - a) * -1.f;
+        if (!safeNormalize(n)) continue;
+        if (n.y < 0.f) n = n * -1.f;
+
+        Vec3 cp = closestPointOnTri(center, a, b, c);
+        Vec3 d = center - cp;
+        float d2 = len2(d);
+        const float r = radius + skin;
+        if (d2 > r*r || d2 < 1e-12f) continue;
+
+        float dist = std::sqrt(d2);
+        Vec3 push = d * (1.f / dist);
+
+        // prefer floor-ish push direction if triangle is nearly flat
+        if (n.y > 0.95f) push = Vec3(0,1,0);
+
+        center = center + push * (radius - dist);
+        float vn = dot3(playerVel, push);
+        if (vn < 0.f) playerVel = playerVel - push * vn;
+
+        if (push.y > 0.75f) grounded = true;
+        hit = true;
+      }
+    }
+  }
+
+  // terrain
   if (enableTerrain && m_terrainHeightFn) {
     const float h = terrainHeightAt(center.x, center.z);
     Vec3 n = terrainNormalAt(center.x, center.z);
     if (!safeNormalize(n)) n = Vec3(0,1,0);
+    if (n.y > 0.95f) n = Vec3(0,1,0);
 
     Vec3 p(center.x, h, center.z);
     float dist = dot3(center - p, n);
@@ -738,6 +799,7 @@ bool PhysicsWorldRB::collidePlayerSphere(Vec3& center, float radius, Vec3& playe
     }
   }
 
+  // legacy ground
   if (enableGround) {
     float bottom = center.y - radius;
     if (bottom < groundY) {
@@ -771,7 +833,7 @@ void PhysicsWorldRB::substep(float h) {
   for (int it=0; it<positionIters; ++it)
     for (const auto& c : contacts) solvePosition(c);
 
-  // supported detection
+  // supported detection: any contact with a "ground-ish" normal
   std::vector<uint8_t> supported(m_bodies.size(), 0);
   for (const auto& c : contacts) {
     if (c.normal.y < 0.75f) continue;
@@ -780,15 +842,21 @@ void PhysicsWorldRB::substep(float h) {
     }
   }
 
-  // mild stabilization (don’t “force stop”, just help settle)
+  // gentle resting stabilization (only when already slow)
   for (size_t i=0;i<m_bodies.size();++i) {
     if (!supported[i]) continue;
     auto& b = m_bodies[i];
     if (!b.isDynamic() || b.asleep) continue;
 
-    b.linearVelocity.x *= 0.85f;
-    b.linearVelocity.z *= 0.85f;
-    b.angularVelocity = b.angularVelocity * 0.90f;
+    const float lv2 = len2(b.linearVelocity);
+    const float av2 = len2(b.angularVelocity);
+    if (lv2 < 0.05f*0.05f) {
+      b.linearVelocity.x *= 0.90f;
+      b.linearVelocity.z *= 0.90f;
+    }
+    if (av2 < 0.15f*0.15f) {
+      b.angularVelocity = b.angularVelocity * 0.92f;
+    }
   }
 
   for (size_t i=0;i<m_bodies.size();++i)
