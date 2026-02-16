@@ -280,21 +280,22 @@ void PhysicsWorldRB::contactsBoxGround(const RigidBoxBody& A, std::vector<Contac
     minY = std::min(minY, v.y);
   }
 
-  if (minY > groundY + skin) return;
+  if (minY > groundY) return;
 
   int emitted = 0;
   const float nearMin = minY + 0.02f;
   for (int i=0;i<8 && emitted<4;i++) {
-    if (verts[i].y <= nearMin && verts[i].y <= groundY + skin) {
-      Contact c;
-      c.a = A.id;
-      c.b = 0;
-      c.point = Vec3(verts[i].x, groundY, verts[i].z);
-      c.normal = Vec3(0,1,0);
-      c.penetration = std::max(0.f, groundY - verts[i].y);
-      out.push_back(c);
-      emitted++;
-    }
+    if (verts[i].y <= nearMin && verts[i].y < groundY) {
+    Contact c;
+    c.a = A.id;
+    c.b = 0;
+    c.point = Vec3(verts[i].x, groundY, verts[i].z);
+    c.normal = Vec3(0,1,0);
+    c.penetration = (groundY - verts[i].y); // strictly > 0
+    out.push_back(c);
+    emitted++;
+  }
+
   }
 }
 
@@ -314,19 +315,18 @@ void PhysicsWorldRB::contactsBoxTerrain(const RigidBoxBody& A, std::vector<Conta
     const Vec3& v = verts[i];
     const float h = terrainHeightAt(v.x, v.z);
     const float depth = h - v.y;
-    if (depth >= -skin) {
-      Contact c;
-      c.a = A.id;
-      c.b = 0;
-      c.point = Vec3(v.x, h, v.z);
-      c.normal = terrainNormalAt(v.x, v.z);
-      c.penetration = std::max(0.f, depth);
-      out.push_back(c);
-      emitted++;
+  if (depth > 0.f) {
+    Contact c;
+    c.a = A.id;
+    c.b = 0;
+    c.point = Vec3(v.x, h, v.z);
+    c.normal = terrainNormalAt(v.x, v.z);
+    c.penetration = depth; // strictly positive
+    out.push_back(c);
+    emitted++;
     }
   }
 }
-
 // ------------------------------------------------------------
 // Contacts: box vs static triangle meshes (stabilized)
 // - penetration-only
@@ -576,7 +576,7 @@ void PhysicsWorldRB::solveVelocity(const Contact& c) {
     if (denomT > 1e-8f) {
       float jt = -dot3(rv, t) / denomT;
 
-      float maxF = friction * std::max(j, 0.5f);
+      float maxF = friction * j;
       jt = clampf(jt, -maxF, maxF);
 
       Vec3 impT = t * jt;
