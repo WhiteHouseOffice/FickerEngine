@@ -139,7 +139,7 @@ static void DrawTransformedMeshRGBA(
 #endif
 }
 
-// --- Build a static triangle mesh from a ColoredBox (full vertices/triangles) ---
+// --- Build a static triangle mesh (full vertices/triangles) ---
 template <typename V>
 static fe::StaticTriMesh BuildStaticTriMesh(
   const std::vector<V>& localVerts,
@@ -162,11 +162,11 @@ static fe::StaticTriMesh BuildStaticTriMesh(
   return m;
 }
 
-// --- Cached unit meshes ---
+// --- Cached unit meshes (IMPORTANT: centered at origin) ---
 static const engine::geom::ColoredBox& UnitCrateBox() {
   static engine::geom::ColoredBox box =
     engine::geom::ColoredBox::make(
-      0,0,0, 1,1,1,
+      -0.5f,-0.5f,-0.5f,  +0.5f,+0.5f,+0.5f,
       engine::geom::ColoredBox::RGBA(210,160,90,255),
       engine::geom::ColoredBox::RGBA(210,160,90,255),
       engine::geom::ColoredBox::RGBA(210,160,90,255),
@@ -179,7 +179,7 @@ static const engine::geom::ColoredBox& UnitCrateBox() {
 static const engine::geom::ColoredBox& UnitPlatformBox() {
   static engine::geom::ColoredBox box =
     engine::geom::ColoredBox::make(
-      0,0,0, 1,1,1,
+      -0.5f,-0.5f,-0.5f,  +0.5f,+0.5f,+0.5f,
       engine::geom::ColoredBox::RGBA(90,140,220,255),
       engine::geom::ColoredBox::RGBA(90,140,220,255),
       engine::geom::ColoredBox::RGBA(90,140,220,255),
@@ -247,7 +247,7 @@ void Scene::init() {
 
   rebuildStaticAABBs();
 
-  // Build static triangle meshes from platforms (full vertices)
+  // Build static triangle meshes from platforms ONLY (do NOT include terrain tris here)
   std::vector<fe::StaticTriMesh> staticMeshes;
   staticMeshes.reserve(m_objects.size());
 
@@ -256,9 +256,11 @@ void Scene::init() {
     if (!o || !o->hasBoxCollider()) continue;
     const Vec3 he = o->boxHalfExtents();
 
-    // Identity rotation for platforms for now (if you add rotation later, pass it here)
+    // IMPORTANT: unit mesh is [-0.5..+0.5], so scale must be FULL extents (2*he)
+    const Vec3 fullScale = he * 2.0f;
+
     staticMeshes.push_back(BuildStaticTriMesh(platformUnit.vertices, platformUnit.indices,
-                                             o->position, IdentityQuat(), he));
+                                             o->position, IdentityQuat(), fullScale));
   }
   m_rb.setStaticMeshes(staticMeshes);
 
@@ -269,7 +271,7 @@ void Scene::init() {
   m_rb.enableGround = false;
   m_rb.setTerrainCallbacks(&TerrainHeightCB, &TerrainNormalCB, &m_terrain);
 
-  m_rb.friction = 0.7f;
+  m_rb.friction = 0.4f;
   m_rb.restitution = 0.0f;
   m_rb.fixedDt = 1.0f / 120.0f;
   m_rb.maxSubsteps = 8;
@@ -299,8 +301,6 @@ void Scene::update(float dt) {
 
   for (auto& obj : m_objects)
     if (obj) obj->update(dt);
-
-  // (If platforms move later, rebuild staticMeshes here.)
 
   if (dt < 0.f) dt = 0.f;
 
@@ -377,8 +377,10 @@ void Scene::renderDebug(const Mat4& view, const Mat4& proj) {
     for (auto& o : m_objects) {
       if (!o || !o->hasBoxCollider()) continue;
       const Vec3 he = o->boxHalfExtents();
+      const Vec3 fullScale = he * 2.0f;
+
       DrawTransformedMeshRGBA(unit.vertices, unit.indices,
-                              o->position, IdentityQuat(), he, true);
+                              o->position, IdentityQuat(), fullScale, true);
     }
   }
 
@@ -386,8 +388,9 @@ void Scene::renderDebug(const Mat4& view, const Mat4& proj) {
   {
     const auto& unit = UnitCrateBox();
     for (const auto& b : m_rb.bodies()) {
+      const Vec3 fullScale = b.halfExtents * 2.0f;
       DrawTransformedMeshRGBA(unit.vertices, unit.indices,
-                              b.position, b.orientation, b.halfExtents, true);
+                              b.position, b.orientation, fullScale, true);
     }
   }
 #else
