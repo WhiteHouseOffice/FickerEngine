@@ -668,7 +668,7 @@ static void stabilizeSupportedBodies(std::vector<RigidBoxBody>& bodies,
   }
 
   for (size_t i=0;i<n;++i) {
-    const auto& b = bodies[i];
+    auto& b = bodies[i];
     if (!b.isDynamic()) continue;
 
     const V2 com{ b.position.x, b.position.z };
