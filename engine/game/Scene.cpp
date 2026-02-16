@@ -63,7 +63,7 @@ static void DrawTransformedMeshRGBA(
     UnpackRGBA(v.rgba, r,g,b,a);
     glColor4f(r,g,b,a);
 
-    Vec4 p = M * Vec4(v.x, v.y, v.z, 1.f);
+    Vec3 p = (M * Vec3(v.x, v.y, v.z));
     glVertex3f(p.x, p.y, p.z);
   }
   glEnd();
@@ -124,10 +124,11 @@ GameObject* Scene::createObject() {
 void Scene::rebuildStaticAABBs() {
   m_static.clear();
   for (auto& obj : m_objects) {
-    if (!obj->hasBoxCollider) continue;
+    if (!obj->hasBoxCollider()) continue;
     fe::AABB a;
-    a.min = obj->position - obj->boxHalfExtents;
-    a.max = obj->position + obj->boxHalfExtents;
+    const Vec3 he = obj->boxHalfExtents();
+    a.min = obj->position - he;
+    a.max = obj->position + he;
     m_static.push_back(a);
   }
   m_rb.setStaticAABBs(m_static);
