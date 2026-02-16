@@ -60,10 +60,11 @@ static inline float cross2(const V2& a, const V2& b, const V2& c) {
   return (b.x - a.x) * (c.z - a.z) - (b.z - a.z) * (c.x - a.x);
 }
 
-static void convexHullXZ(const std::vector<V2>& pts, std::vector<V2>& hull) {
-  hull.clear();
-  if (pts.size() < 3) { hull = pts; return; }
+static void convexHullXZ(const std::vector<V2>& pts, std::vector<V2>& outHull) {
+  outHull.clear();
+  if (pts.size() < 3) return;
 
+  // Monotonic chain
   std::vector<V2> p = pts;
   std::sort(p.begin(), p.end(), [](const V2& a, const V2& b){
     if (a.x != b.x) return a.x < b.x;
@@ -71,50 +72,85 @@ static void convexHullXZ(const std::vector<V2>& pts, std::vector<V2>& hull) {
   });
 
   std::vector<V2> lower, upper;
-  lower.reserve(p.size());
-  upper.reserve(p.size());
-
   for (const auto& v : p) {
-    while (lower.size() >= 2 && cross2(lower[lower.size()-2], lower[lower.size()-1], v) <= 0.f) lower.pop_back();
+    while (lower.size() >= 2 && cross2(lower[lower.size()-2], lower[lower.size()-1], v) <= 0.f)
+      lower.pop_back();
     lower.push_back(v);
   }
-  for (int i = (int)p.size() - 1; i >= 0; --i) {
+  for (int i=(int)p.size()-1; i>=0; --i) {
     const auto& v = p[(size_t)i];
-    while (upper.size() >= 2 && cross2(upper[upper.size()-2], upper[upper.size()-1], v) <= 0.f) upper.pop_back();
+    while (upper.size() >= 2 && cross2(upper[upper.size()-2], upper[upper.size()-1], v) <= 0.f)
+      upper.pop_back();
     upper.push_back(v);
   }
 
+  // Concatenate (last point of each is duplicate)
   lower.pop_back();
   upper.pop_back();
-  hull = lower;
-  hull.insert(hull.end(), upper.begin(), upper.end());
+  outHull = lower;
+  outHull.insert(outHull.end(), upper.begin(), upper.end());
 }
 
 static bool pointInConvexXZ(const std::vector<V2>& hull, const V2& p) {
   if (hull.size() < 3) return false;
-  // For convex polygon, check all edges have same orientation
-  float sign = 0.f;
+  // All cross products should have same sign for convex polygon (assumed CCW)
+  float prev = 0.f;
   for (size_t i=0;i<hull.size();++i) {
     const V2& a = hull[i];
     const V2& b = hull[(i+1) % hull.size()];
-    float c = (b.x - a.x) * (p.z - a.z) - (b.z - a.z) * (p.x - a.x);
-    if (std::fabs(c) < 1e-6f) continue;
-    if (sign == 0.f) sign = (c > 0.f) ? 1.f : -1.f;
+    float c = cross2(a, b, p);
+    if (i==0) prev = c;
     else {
-      if ((c > 0.f && sign < 0.f) || (c < 0.f && sign > 0.f)) return false;
+      if ((prev >= 0.f && c < 0.f) || (prev < 0.f && c >= 0.f))
+        return false;
     }
   }
   return true;
 }
 
 // ============================================================
-// Creation / access
+// OBB helpers
+// ============================================================
+static void computeOBBAxes(const RigidBoxBody& b, Vec3& ax, Vec3& ay, Vec3& az) {
+  Quat qn = safeQuatNormalize(b.orientation);
+  Mat3 R = quatToMat3(qn);
+  ax = Vec3(R.m[0][0], R.m[1][0], R.m[2][0]);
+  ay = Vec3(R.m[0][1], R.m[1][1], R.m[2][1]);
+  az = Vec3(R.m[0][2], R.m[1][2], R.m[2][2]);
+}
+
+static Vec3 obbVertex(const RigidBoxBody& b, int sx, int sy, int sz) {
+  Vec3 ax, ay, az;
+  computeOBBAxes(b, ax, ay, az);
+  return b.position
+    + ax * (b.halfExtents.x * (float)sx)
+    + ay * (b.halfExtents.y * (float)sy)
+    + az * (b.halfExtents.z * (float)sz);
+}
+
+static inline float absf(float x){ return x < 0.f ? -x : x; }
+
+// ============================================================
+// World inertia helpers
+// ============================================================
+Mat3 PhysicsWorldRB::invInertiaWorld(const RigidBoxBody& b) const {
+  Quat qn = safeQuatNormalize(b.orientation);
+  Mat3 R = quatToMat3(qn);
+  Mat3 Rt = mat3Transpose(R);
+  // Iw^-1 = R * Ilocal^-1 * R^T
+  return mat3Mul(mat3Mul(R, b.invInertiaLocal), Rt);
+}
+
+// ============================================================
+// Create / access
 // ============================================================
 uint32_t PhysicsWorldRB::createBox(const Vec3& pos, const Vec3& halfExtents, float mass) {
   RigidBoxBody b;
   b.id = m_nextId++;
   b.position = pos;
   b.orientation = Quat::identity();
+  b.linearVelocity = Vec3(0,0,0);
+  b.angularVelocity = Vec3(0,0,0);
   b.halfExtents = halfExtents;
 
   if (mass > 0.f) {
@@ -130,30 +166,59 @@ uint32_t PhysicsWorldRB::createBox(const Vec3& pos, const Vec3& halfExtents, flo
 }
 
 RigidBoxBody* PhysicsWorldRB::get(uint32_t id) {
-  for (auto& b : m_bodies)
-    if (b.id == id) return &b;
+  for (auto& b : m_bodies) if (b.id == id) return &b;
   return nullptr;
 }
 
 void PhysicsWorldRB::clearDynamics() {
   m_bodies.clear();
   m_nextId = 1;
-  m_accum = 0.f;
 }
 
 // ============================================================
-// Integration
+// Integration + damping + sleeping
 // ============================================================
-Mat3 PhysicsWorldRB::invInertiaWorld(const RigidBoxBody& b) const {
-  Quat qn = safeQuatNormalize(b.orientation);
-  Mat3 R = quatToMat3(qn);
-  return mat3Mul(mat3Mul(R, b.invInertiaLocal), mat3Transpose(R));
+void PhysicsWorldRB::applyDamping(RigidBoxBody& b, float h) {
+  if (!b.isDynamic() || b.asleep) return;
+
+  // Stable-ish damping: v *= 1/(1 + d*dt)
+  const float ld = std::max(0.f, b.linearDamping);
+  const float ad = std::max(0.f, b.angularDamping);
+
+  const float linMul = 1.f / (1.f + ld * h);
+  const float angMul = 1.f / (1.f + ad * h);
+
+  b.linearVelocity = b.linearVelocity * linMul;
+  b.angularVelocity = b.angularVelocity * angMul;
+}
+
+void PhysicsWorldRB::updateSleeping(RigidBoxBody& b, float h) {
+  if (!b.isDynamic()) return;
+
+  // If it is basically not moving, accumulate sleep time.
+  const float lv2 = len2(b.linearVelocity);
+  const float av2 = len2(b.angularVelocity);
+
+  const float vThresh2  = b.sleepVel * b.sleepVel;
+  const float wThresh2  = b.sleepAngVel * b.sleepAngVel;
+
+  if (lv2 < vThresh2 && av2 < wThresh2) {
+    b.sleepTimer += h;
+    if (b.sleepTimer >= b.sleepTime) {
+      b.asleep = true;
+      b.linearVelocity = Vec3(0,0,0);
+      b.angularVelocity = Vec3(0,0,0);
+    }
+  } else {
+    b.sleepTimer = 0.f;
+    b.asleep = false;
+  }
 }
 
 void PhysicsWorldRB::applyImpulse(RigidBoxBody& b, const Vec3& impulse, const Vec3& r) {
   if (!b.isDynamic()) return;
 
-  // Wake on meaningful impulse (fixes "sometimes can't push")
+  // Wake on meaningful impulse
   if (b.asleep && len2(impulse) > 1e-6f) {
     b.asleep = false;
     b.sleepTimer = 0.f;
@@ -189,127 +254,38 @@ void PhysicsWorldRB::integrate(RigidBoxBody& b, float h) {
 }
 
 // ============================================================
-// Collision helpers
-// ============================================================
-static void computeOBBAxes(const RigidBoxBody& b, Vec3& ax, Vec3& ay, Vec3& az) {
-  Quat qn = safeQuatNormalize(b.orientation);
-  ax = quatRotate(qn, Vec3(1,0,0));
-  ay = quatRotate(qn, Vec3(0,1,0));
-  az = quatRotate(qn, Vec3(0,0,1));
-}
-
-static Vec3 obbVertex(const RigidBoxBody& b, int sx, int sy, int sz) {
-  Vec3 ax, ay, az;
-  computeOBBAxes(b, ax, ay, az);
-  return b.position
-    + ax * (b.halfExtents.x * (float)sx)
-    + ay * (b.halfExtents.y * (float)sy)
-    + az * (b.halfExtents.z * (float)sz);
-}
-
-static bool pointInOBB(const Vec3& p, const RigidBoxBody& b) {
-  Vec3 ax, ay, az;
-  computeOBBAxes(b, ax, ay, az);
-  Vec3 d = p - b.position;
-  float px = dot3(d, ax);
-  float py = dot3(d, ay);
-  float pz = dot3(d, az);
-  const float eps = 1e-4f;
-  return std::fabs(px) <= b.halfExtents.x + eps
-      && std::fabs(py) <= b.halfExtents.y + eps
-      && std::fabs(pz) <= b.halfExtents.z + eps;
-}
-
-static float projectRadius(const RigidBoxBody& b, const Vec3& axis) {
-  Vec3 ax, ay, az;
-  computeOBBAxes(b, ax, ay, az);
-  return std::fabs(dot3(axis, ax)) * b.halfExtents.x
-       + std::fabs(dot3(axis, ay)) * b.halfExtents.y
-       + std::fabs(dot3(axis, az)) * b.halfExtents.z;
-}
-
-// SAT for OBB vs OBB.
-// outN points from B -> A (solver uses A += impulse, B -= impulse)
-static bool satOBBOBB(const RigidBoxBody& A, const RigidBoxBody& B, Vec3& outN, float& outPen) {
-  Vec3 Ax, Ay, Az; computeOBBAxes(A, Ax, Ay, Az);
-  Vec3 Bx, By, Bz; computeOBBAxes(B, Bx, By, Bz);
-
-  Vec3 axes[15] = {
-    Ax,Ay,Az,
-    Bx,By,Bz,
-    cross(Ax,Bx), cross(Ax,By), cross(Ax,Bz),
-    cross(Ay,Bx), cross(Ay,By), cross(Ay,Bz),
-    cross(Az,Bx), cross(Az,By), cross(Az,Bz)
-  };
-
-  Vec3 d = B.position - A.position;
-
-  float bestPen = 1e30f;
-  Vec3 bestAxis{0,1,0};
-
-  for (int i=0; i<15; ++i) {
-    Vec3 a = axes[i];
-    float l2 = len2(a);
-    if (!finite1(l2) || l2 < 1e-10f) continue;
-    a = a * (1.f / std::sqrt(l2));
-
-    float ra = projectRadius(A, a);
-    float rb = projectRadius(B, a);
-    float dist = std::fabs(dot3(d, a));
-    float pen = (ra + rb) - dist;
-    if (pen < 0.f) return false;
-
-    if (pen < bestPen) {
-      bestPen = pen;
-      // a points roughly A->B when dot(d,a)>0; want B->A => flip
-      bestAxis = (dot3(d, a) > 0.f) ? (a * -1.f) : a;
-    }
-  }
-
-  outN = bestAxis;
-  outPen = bestPen;
-  return true;
-}
-
-void PhysicsWorldRB::contactsBoxBox(const RigidBoxBody& A, const RigidBoxBody& B, std::vector<Contact>& out) {
-  Vec3 n; float pen;
-  if (!satOBBOBB(A, B, n, pen)) return;
-
-  std::vector<Vec3> pts;
-  pts.reserve(16);
-
-  const int s[2] = {-1, 1};
-  for (int ix: s) for (int iy: s) for (int iz: s) {
-    Vec3 v = obbVertex(A, ix, iy, iz);
-    if (pointInOBB(v, B)) pts.push_back(v);
-  }
-  for (int ix: s) for (int iy: s) for (int iz: s) {
-    Vec3 v = obbVertex(B, ix, iy, iz);
-    if (pointInOBB(v, A)) pts.push_back(v);
-  }
-
-  if (pts.empty()) {
-    Vec3 p = (A.position + B.position) * 0.5f + n * (pen * 0.5f);
-    pts.push_back(p);
-  }
-
-  if (pts.size() > 4) pts.resize(4);
-
-  for (const Vec3& p : pts) {
-    Contact c;
-    c.a = A.id;
-    c.b = B.id;
-    c.point = p;
-    c.normal = n;        // B -> A
-    c.penetration = pen;
-    out.push_back(c);
-  }
-}
-
-// ============================================================
 // Contacts
 // ============================================================
+void PhysicsWorldRB::gatherContacts(std::vector<Contact>& out) {
+  out.clear();
+
+  // dynamic vs ground / statics
+  for (const auto& a : m_bodies) {
+    if (!a.isDynamic() || a.asleep) continue;
+
+    if (enableGround) contactsBoxGround(a, out);
+    for (const auto& s : m_static) contactsBoxStaticAABB(a, s, out);
+  }
+
+  // dynamic vs dynamic
+  const size_t n = m_bodies.size();
+  for (size_t i=0;i<n;++i) {
+    const auto& A = m_bodies[i];
+    if (!A.isDynamic() || A.asleep) continue;
+
+    for (size_t j=i+1;j<n;++j) {
+      const auto& B = m_bodies[j];
+      if (!B.isDynamic() || B.asleep) continue;
+
+      contactsBoxBox(A, B, out);
+    }
+  }
+}
+
 void PhysicsWorldRB::contactsBoxGround(const RigidBoxBody& A, std::vector<Contact>& out) {
+  // Emit contacts when within a small "skin" above the plane too.
+  const float skin = std::max(contactSkin, kSupportSkin);
+
   float minY = 1e30f;
   Vec3 verts[8];
   int idx = 0;
@@ -321,20 +297,45 @@ void PhysicsWorldRB::contactsBoxGround(const RigidBoxBody& A, std::vector<Contac
     minY = std::min(minY, v.y);
   }
 
-  if (minY >= groundY) return;
+  // If the lowest vertex is well above ground+skin, no contact.
+  if (minY > groundY + skin) return;
 
+  // Pick up to 4 points near the bottom-most area.
+  // This gives stable resting on flat faces, while still allowing corner contacts for tipping.
   int emitted = 0;
+
+  // Threshold: either near minY, or close to ground plane within skin.
+  const float nearMin = minY + 0.02f;
+  const float planeBand = groundY + skin;
+
   for (int i=0;i<8 && emitted<4;i++) {
-    if (verts[i].y <= minY + 0.01f) {
+    const float y = verts[i].y;
+    if (y <= nearMin && y <= planeBand) {
       Contact c;
       c.a = A.id;
       c.b = 0;
       c.point = verts[i];
       c.normal = Vec3(0,1,0);
-      c.penetration = groundY - verts[i].y;
+
+      // penetration is clamped >= 0 (skin contacts can be 0)
+      c.penetration = std::max(0.f, groundY - y);
+
       out.push_back(c);
       emitted++;
     }
+  }
+
+  // Fallback: if we didn't emit anything (rare numeric corner cases), emit the minY vertex
+  if (emitted == 0) {
+    int best = 0;
+    for (int i=1;i<8;i++) if (verts[i].y < verts[best].y) best = i;
+    Contact c;
+    c.a = A.id;
+    c.b = 0;
+    c.point = verts[best];
+    c.normal = Vec3(0,1,0);
+    c.penetration = std::max(0.f, groundY - verts[best].y);
+    out.push_back(c);
   }
 }
 
@@ -345,71 +346,101 @@ void PhysicsWorldRB::contactsBoxStaticAABB(const RigidBoxBody& A, const AABB& S,
   Vec3 ax, ay, az;
   computeOBBAxes(A, ax, ay, az);
 
+  // Broad: AABB overlap test in world space by OBB extents
+  // Cheap approximation: OBB projected extents along world axes
+  Vec3 ex(
+    absf(ax.x)*A.halfExtents.x + absf(ay.x)*A.halfExtents.y + absf(az.x)*A.halfExtents.z,
+    absf(ax.y)*A.halfExtents.x + absf(ay.y)*A.halfExtents.y + absf(az.y)*A.halfExtents.z,
+    absf(ax.z)*A.halfExtents.x + absf(ay.z)*A.halfExtents.y + absf(az.z)*A.halfExtents.z
+  );
+
+  Vec3 aMin = A.position - ex;
+  Vec3 aMax = A.position + ex;
+
+  if (aMax.x < S.min.x || aMin.x > S.max.x) return;
+  if (aMax.z < S.min.z || aMin.z > S.max.z) return;
+
+  // If OBB is not near the top plane, bail
+  const float skin = std::max(contactSkin, kSupportSkin);
+  if (aMin.y > topY + skin) return;
+  if (aMax.y < topY - 3.0f) return;
+
+  // Use bottom-ish vertices as contact candidates
   Vec3 verts[8];
-  float minY = 1e30f;
   int idx = 0;
-  const int s[2] = {-1,1};
-  for (int ix : s) for (int iy : s) for (int iz : s) {
-    Vec3 v = A.position
-      + ax * (A.halfExtents.x * (float)ix)
-      + ay * (A.halfExtents.y * (float)iy)
-      + az * (A.halfExtents.z * (float)iz);
+
+  float bestY = 1e30f;
+  const int sgn[2] = {-1,1};
+  for (int ix : sgn) for (int iy : sgn) for (int iz : sgn) {
+    Vec3 v = obbVertex(A, ix, iy, iz);
     verts[idx++] = v;
-    minY = std::min(minY, v.y);
+    bestY = std::min(bestY, v.y);
   }
 
-  if (minY > topY + kSupportSkin) return;
-
-  // prevent support if body is moving upward quickly (reduces “pop”)
-  if (A.linearVelocity.y > 0.5f) return;
-
-  const float bottomEps = 0.02f;
-  const float edgeTol   = 0.10f; // slightly forgiving support for slight overhang
-
+  // Emit up to 4 contacts that are within footprint and near the top plane
   int emitted = 0;
-  for (int i=0; i<8 && emitted<4; ++i) {
+  for (int i=0;i<8 && emitted<4;i++) {
     const Vec3& v = verts[i];
-    if (v.y > minY + bottomEps) continue;
 
-    if (v.x < S.min.x - edgeTol || v.x > S.max.x + edgeTol) continue;
-    if (v.z < S.min.z - edgeTol || v.z > S.max.z + edgeTol) continue;
+    // inside static top footprint
+    if (v.x < S.min.x - 0.02f || v.x > S.max.x + 0.02f) continue;
+    if (v.z < S.min.z - 0.02f || v.z > S.max.z + 0.02f) continue;
 
-    float px = clampf(v.x, S.min.x, S.max.x);
-    float pz = clampf(v.z, S.min.z, S.max.z);
+    // near the platform top band (allow skin above)
+    if (v.y > topY + skin) continue;
 
-    if (v.y <= topY + kSupportSkin) {
-      Contact c;
-      c.a = A.id;
-      c.b = 0;
-      c.point = Vec3(px, topY, pz);
-      c.normal = Vec3(0,1,0);
-      c.penetration = std::max(0.f, topY - v.y);
-      out.push_back(c);
-      emitted++;
-    }
+    // also prefer bottom-most vertices (stable)
+    if (v.y > bestY + 0.03f) continue;
+
+    Contact c;
+    c.a = A.id;
+    c.b = 0;
+    c.point = Vec3(v.x, topY, v.z);
+    c.normal = Vec3(0,1,0);
+    c.penetration = std::max(0.f, topY - v.y);
+    out.push_back(c);
+    emitted++;
   }
 }
 
-void PhysicsWorldRB::gatherContacts(std::vector<Contact>& out) {
-  out.clear();
-  out.reserve(128);
+void PhysicsWorldRB::contactsBoxBox(const RigidBoxBody& A, const RigidBoxBody& B, std::vector<Contact>& out) {
+  // Minimal (kept from your prior version): treat as broad overlap via world AABB from projected extents.
+  Vec3 axA, ayA, azA; computeOBBAxes(A, axA, ayA, azA);
+  Vec3 axB, ayB, azB; computeOBBAxes(B, axB, ayB, azB);
 
-  // dynamic vs ground/static
-  for (auto& b : m_bodies) {
-    if (!b.isDynamic() || b.asleep) continue;
-    if (enableGround) contactsBoxGround(b, out);
-    for (const auto& s : m_static) contactsBoxStaticAABB(b, s, out);
-  }
+  Vec3 exA(
+    absf(axA.x)*A.halfExtents.x + absf(ayA.x)*A.halfExtents.y + absf(azA.x)*A.halfExtents.z,
+    absf(axA.y)*A.halfExtents.x + absf(ayA.y)*A.halfExtents.y + absf(azA.y)*A.halfExtents.z,
+    absf(axA.z)*A.halfExtents.x + absf(ayA.z)*A.halfExtents.y + absf(azA.z)*A.halfExtents.z
+  );
+  Vec3 exB(
+    absf(axB.x)*B.halfExtents.x + absf(ayB.x)*B.halfExtents.y + absf(azB.x)*B.halfExtents.z,
+    absf(axB.y)*B.halfExtents.x + absf(ayB.y)*B.halfExtents.y + absf(azB.y)*B.halfExtents.z,
+    absf(axB.z)*B.halfExtents.x + absf(ayB.z)*B.halfExtents.y + absf(azB.z)*B.halfExtents.z
+  );
 
-  // dynamic vs dynamic
-  for (size_t i = 0; i < m_bodies.size(); ++i) {
-    for (size_t j = i + 1; j < m_bodies.size(); ++j) {
-      const auto& A = m_bodies[i];
-      const auto& B = m_bodies[j];
-      if ((!A.isDynamic() && !B.isDynamic()) || (A.asleep && B.asleep)) continue;
-      contactsBoxBox(A, B, out);
-    }
-  }
+  Vec3 aMin = A.position - exA;
+  Vec3 aMax = A.position + exA;
+  Vec3 bMin = B.position - exB;
+  Vec3 bMax = B.position + exB;
+
+  if (aMax.x < bMin.x || aMin.x > bMax.x) return;
+  if (aMax.y < bMin.y || aMin.y > bMax.y) return;
+  if (aMax.z < bMin.z || aMin.z > bMax.z) return;
+
+  // Create a single approximate contact at midpoint with upward-ish normal.
+  // (Good enough for now; later we can upgrade to SAT + manifolds.)
+  Vec3 mid = (A.position + B.position) * 0.5f;
+  Vec3 n = A.position - B.position;
+  if (!safeNormalize(n)) n = Vec3(0,1,0);
+
+  Contact c;
+  c.a = A.id;
+  c.b = B.id;
+  c.point = mid;
+  c.normal = n; // from A toward B
+  c.penetration = 0.02f; // small bias to keep them from sinking into each other
+  out.push_back(c);
 }
 
 // ============================================================
@@ -499,6 +530,7 @@ void PhysicsWorldRB::solveVelocity(const Contact& c) {
     if (denomT > 1e-8f) {
       float jt = -dot3(rv, t) / denomT;
 
+      // Ensure friction exists even on tiny normal impulses (skin contacts)
       float maxF = friction * std::max(j, 0.5f);
       if (jt >  maxF) jt =  maxF;
       if (jt < -maxF) jt = -maxF;
@@ -568,7 +600,6 @@ static void stabilizeSupportedBodies(std::vector<RigidBoxBody>& bodies,
 
   // 1) Contacts-based support (ground, static-top, box-on-box)
   for (const auto& c : contacts) {
-    // Support means normal points upward enough for A
     if (c.normal.y < kSupportNMin) continue;
     if (c.penetration < -kSupportSkin) continue;
 
@@ -585,22 +616,17 @@ static void stabilizeSupportedBodies(std::vector<RigidBoxBody>& bodies,
 
     const V2 com{ b.position.x, b.position.z };
 
-    // If we have enough points, check convex support hull
     if (supportPts[i].size() >= 3) {
       std::vector<V2> hull;
       convexHullXZ(supportPts[i], hull);
       if (pointInConvexXZ(hull, com)) supported[i] = 1;
     }
 
-    // If no hull support, also accept support if COM is within any static top footprint
-    // AND we're near its top plane (cheap “platform support”)
     if (!supported[i]) {
       for (const auto& s : statics) {
         if (com.x >= s.min.x && com.x <= s.max.x &&
             com.z >= s.min.z && com.z <= s.max.z) {
-          // near top
           if (b.position.y >= s.max.y - 2.0f && b.position.y <= s.max.y + 2.0f) {
-            // not moving upward quickly
             if (b.linearVelocity.y <= 0.5f) {
               supported[i] = 1;
               break;
@@ -611,20 +637,17 @@ static void stabilizeSupportedBodies(std::vector<RigidBoxBody>& bodies,
     }
   }
 
-  // 3) Stabilize: kill tiny lateral/ang jitter while supported (prevents the “landing nudge”)
+  // 3) Stabilize: kill tiny lateral/ang jitter while supported
   for (size_t i=0;i<n;++i) {
     if (!supported[i]) continue;
     auto& b = bodies[i];
     if (!b.isDynamic()) continue;
 
-    // Only damp when already nearly resting (don’t fight real motion)
     Vec3 lv = b.linearVelocity;
     Vec3 av = b.angularVelocity;
 
-    const float lv2 = len2(lv);
     const float av2 = len2(av);
 
-    // Lateral-only damping (keep y so jumps remain)
     Vec3 lateral(lv.x, 0.f, lv.z);
     float lat2 = len2(lateral);
 
@@ -634,7 +657,6 @@ static void stabilizeSupportedBodies(std::vector<RigidBoxBody>& bodies,
     }
 
     if (av2 < kRestAngVel*kRestAngVel) {
-      // Kill small ang jitter (keeps stacks aligned)
       b.angularVelocity.x *= (1.f - kRestDampAng);
       b.angularVelocity.y *= (1.f - kRestDampAng);
       b.angularVelocity.z *= (1.f - kRestDampAng);
@@ -643,7 +665,7 @@ static void stabilizeSupportedBodies(std::vector<RigidBoxBody>& bodies,
 }
 
 // ============================================================
-// Player collision (push that works for walking + avoids edge rockets)
+// Player collision (kept from your version)
 // ============================================================
 bool PhysicsWorldRB::collidePlayerSphere(Vec3& center, float radius, Vec3& playerVel, bool* outGrounded) {
   bool hit = false;
@@ -665,45 +687,46 @@ bool PhysicsWorldRB::collidePlayerSphere(Vec3& center, float radius, Vec3& playe
 
     Vec3 closest = mat3Mul(R, cl) + b.position;
     Vec3 delta = center - closest;
+
     float d2 = len2(delta);
-    if (d2 >= radius*radius || d2 < 1e-10f) continue;
+    if (d2 > radius*radius) continue;
 
-    float dist = std::sqrt(d2);
-    Vec3 nRaw = delta * (1.f / dist); // box -> player
-    Vec3 nRes = nRaw;
+    float d = (d2 > 1e-10f) ? std::sqrt(d2) : 0.f;
+    Vec3 n = (d > 1e-6f) ? (delta * (1.f/d)) : Vec3(0,1,0);
 
-    // Don’t push player down/up when walking into sides
-    if (std::fabs(nRes.y) < 0.5f) {
-      nRes.y = 0.f;
-      safeNormalize(nRes);
-    }
+    float pen = radius - d;
+    if (pen < 0.f) continue;
 
-    center = center + nRes * (radius - dist);
-
-    float vn = dot3(playerVel, nRes);
-    if (vn < 0.f) playerVel -= nRes * vn;
-
-    // Walking push: impulse away from player
-    // nh points box->player, so impulse must be -nh.
-    Vec3 nh(nRaw.x, 0.0f, nRaw.z);
-    if (safeNormalize(nh)) {
-      // only mostly-side hits to avoid jump-edge rockets
-      if (std::fabs(nRaw.y) < 0.65f) {
-        float vInto = -dot3(playerVelIn, nh); // >0 when moving toward box
-        if (vInto > 0.f) {
-          float j = kPlayerPushScale * vInto;
-          if (j > kMaxPlayerPushJ) j = kMaxPlayerPushJ;
-
-          // Apply at COM to reduce “spin rockets”
-          applyImpulse(b, nh * (-j), Vec3(0,0,0));
-          b.asleep = false;
-          b.sleepTimer = 0.f;
-        }
-      }
-    }
-
-    if (nRaw.y > 0.6f) grounded = true;
+    // Position correction
+    center = center + n * pen;
     hit = true;
+
+    if (n.y >= kSupportNMin) grounded = true;
+
+    // Player "push" impulse onto body (horizontal-only; avoid rocket)
+    Vec3 pushDir = Vec3(playerVelIn.x, 0.f, playerVelIn.z);
+    if (safeNormalize(pushDir)) {
+      float desired = std::min(kMaxPlayerPushJ, kPlayerPushScale * pen);
+      Vec3 j = pushDir * desired;
+      applyImpulse(b, j, closest - b.position);
+    }
+
+    // Remove velocity into the object
+    float vn = dot3(playerVel, n);
+    if (vn < 0.f) playerVel = playerVel - n * vn;
+  }
+
+  // Ground plane for player sphere
+  if (enableGround) {
+    float bottom = center.y - radius;
+    if (bottom < groundY) {
+      float pen = groundY - bottom;
+      center.y += pen;
+      hit = true;
+      grounded = true;
+
+      if (playerVel.y < 0.f) playerVel.y = 0.f;
+    }
   }
 
   if (outGrounded) *outGrounded = grounded;
@@ -711,10 +734,13 @@ bool PhysicsWorldRB::collidePlayerSphere(Vec3& center, float radius, Vec3& playe
 }
 
 // ============================================================
-// Stepping
+// Step
 // ============================================================
 void PhysicsWorldRB::substep(float h) {
-  for (auto& b : m_bodies) integrate(b, h);
+  for (auto& b : m_bodies) {
+    integrate(b, h);
+    applyDamping(b, h);
+  }
 
   std::vector<Contact> contacts;
   gatherContacts(contacts);
@@ -725,8 +751,11 @@ void PhysicsWorldRB::substep(float h) {
   for (int it=0; it<positionIters; ++it)
     for (const auto& c : contacts) solvePosition(c);
 
-  // *** Upgrade pass ***
+  // Stabilize supported bodies (reduces micro-drift/jitter)
   stabilizeSupportedBodies(m_bodies, contacts, m_static);
+
+  // Sleeping pass (after corrections + stabilization)
+  for (auto& b : m_bodies) updateSleeping(b, h);
 }
 
 void PhysicsWorldRB::step(float dt) {

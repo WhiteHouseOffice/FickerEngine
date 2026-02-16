@@ -13,7 +13,7 @@ struct Contact {
 
   Vec3 point{0.f,0.f,0.f};   // world
   Vec3 normal{0.f,1.f,0.f};  // from A toward B (or out of static)
-  float penetration = 0.f;
+  float penetration = 0.f;   // >=0 penetration depth. (We also allow 0 in "skin" band)
 };
 
 class PhysicsWorldRB {
@@ -25,6 +25,9 @@ public:
 
   float restitution = 0.0f;
   float friction = 0.6f;
+
+  // Contact skin helps resting friction + sleeping (objects can "touch" without penetrating)
+  float contactSkin = 0.06f;
 
   float fixedDt = 1.f/120.f;
   int   maxSubsteps = 8;
@@ -45,7 +48,7 @@ public:
   bool collidePlayerSphere(Vec3& center, float radius, Vec3& playerVel, bool* outGrounded);
 
   void step(float dt);
-  
+
   std::vector<RigidBoxBody>& bodiesMutable() { return m_bodies; }
   const std::vector<RigidBoxBody>& bodies() const { return m_bodies; }
 
@@ -72,6 +75,7 @@ private:
 
   Mat3 invInertiaWorld(const RigidBoxBody& b) const;
   void applyImpulse(RigidBoxBody& b, const Vec3& impulse, const Vec3& r);
+
   void updateSleeping(RigidBoxBody& b, float h);
 };
 
