@@ -63,8 +63,7 @@ static void DrawTransformedMeshRGBA(
     UnpackRGBA(v.rgba, r,g,b,a);
     glColor4f(r,g,b,a);
 
-    Vec3 p = (M * Vec3(v.x, v.y, v.z));
-    glVertex3f(p.x, p.y, p.z);
+    glVertex3f(v.x, v.y, v.z);
   }
   glEnd();
 #else
