@@ -8,55 +8,33 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT_DIR"
 
 # ------------------------------------------------------------
-# Git sync (non-blocking)
+# Git sync (simple + non-blocking)
 # ------------------------------------------------------------
-echo "== git status =="
-git status --porcelain=v1 -b || true
+DEV_BRANCH="dev/physics-fix"   # <- change this when we move to another active branch
 
-echo "== git sync =="
+if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  echo "== git status =="
+  git status --porcelain=v1 -b || true
 
-# If we're not in a git repo, just build/run
-if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-  echo "Not a git repo -> skipping sync"
-else
-  branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
-
-  # Do a safe fetch (won't prompt; won't fail the script)
-  git fetch --all --prune >/dev/null 2>&1 || true
-
-  # If upstream exists, pull fast-forward only (no merges)
-  if git rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1; then
-    echo "Upstream set -> pulling"
-    git pull --ff-only >/dev/null 2>&1 || true
-  else
-    echo "No upstream tracking branch set -> attempting auto-fix"
-
-    if [[ -n "${branch}" && "${branch}" != "HEAD" ]]; then
-      # If remote branch exists, set upstream and pull
-      if git ls-remote --exit-code --heads origin "${branch}" >/dev/null 2>&1; then
-        echo "Setting upstream to origin/${branch}"
-        git branch --set-upstream-to="origin/${branch}" "${branch}" >/dev/null 2>&1 || true
-        git pull --ff-only >/dev/null 2>&1 || true
-      else
-        echo "origin/${branch} does not exist -> cannot pull"
-        echo "If this is a new local branch, publish it with:"
-        echo "  git push -u origin ${branch}"
+  # If we're not already on the dev branch, try to switch to it.
+  # If it doesn't exist locally, try to create it from origin.
+  current_branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")"
+  if [[ -n "${DEV_BRANCH}" && "${current_branch}" != "${DEV_BRANCH}" && "${current_branch}" != "HEAD" ]]; then
+    if git show-ref --verify --quiet "refs/heads/${DEV_BRANCH}"; then
+      git checkout "${DEV_BRANCH}" >/dev/null 2>&1 || true
+    else
+      git fetch --all --prune >/dev/null 2>&1 || true
+      if git show-ref --verify --quiet "refs/remotes/origin/${DEV_BRANCH}"; then
+        git checkout -b "${DEV_BRANCH}" "origin/${DEV_BRANCH}" >/dev/null 2>&1 || true
       fi
-    else
-      echo "Detached HEAD -> cannot auto-set upstream"
     fi
   fi
 
-  # Optional auto-push (ONLY if it won't prompt; otherwise skip quietly)
-  # This is what makes Codespaces->local easy, but it should never block builds.
-  if [[ -n "${branch}" && "${branch}" != "HEAD" ]]; then
-    # If upstream not set, try to set it (quietly). If auth missing, it will fail and we ignore it.
-    if ! git rev-parse --abbrev-ref --symbolic-full-name "@{u}" >/dev/null 2>&1; then
-      git push -u origin "${branch}" >/dev/null 2>&1 || true
-    else
-      git push >/dev/null 2>&1 || true
-    fi
-  fi
+  echo "== git pull =="
+  git fetch --all --prune >/dev/null 2>&1 || true
+  git pull --ff-only >/dev/null 2>&1 || true
+else
+  echo "Not a git repo -> skipping sync"
 fi
 
 # ------------------------------------------------------------
@@ -73,7 +51,6 @@ cmake --build "$BUILD_DIR" -j
 
 echo "== find executable =="
 
-# Try common executable paths/names
 CANDIDATES=(
   "$BUILD_DIR/FickerEngine"
   "$BUILD_DIR/fickerengine"
@@ -89,7 +66,6 @@ for c in "${CANDIDATES[@]}"; do
   fi
 done
 
-# Fall back: search for a runnable file in build root (fast, shallow)
 if [[ -z "$EXE" ]]; then
   while IFS= read -r -d '' f; do
     EXE="$f"
