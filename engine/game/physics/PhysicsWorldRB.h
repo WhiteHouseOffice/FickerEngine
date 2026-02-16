@@ -52,7 +52,7 @@ public:
   float friction = 0.6f;
 
   // Keeps contacts alive slightly above surfaces so friction can act at rest
-  float contactSkin = 0.02f;
+  float contactSkin = 0.015f;
 
   float fixedDt = 1.f/120.f;
   int   maxSubsteps = 8;

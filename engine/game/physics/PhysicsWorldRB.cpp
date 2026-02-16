@@ -341,63 +341,51 @@ void PhysicsWorldRB::contactsBoxStaticMeshes(const RigidBoxBody& A, std::vector<
   for (int ix : s) for (int iy : s) for (int iz : s)
     boxVerts[idx++] = obbVertex(A, ix, iy, iz);
 
-  struct Cand { Contact c; };
-  std::vector<Cand> cands;
-  cands.reserve(16);
+  // best contact per corner
+  Contact best[8];
+  bool has[8] = {false,false,false,false,false,false,false,false};
+  float bestPen[8] = {0,0,0,0,0,0,0,0};
 
-  for (int vi = 0; vi < 8; ++vi) {
-    const Vec3& p = boxVerts[vi];
+  for (const auto& mesh : m_staticMeshes) {
+    if (mesh.indices.size() < 3 || mesh.verts.empty()) continue;
 
-    bool  hasBest = false;
-    float bestPen = 0.f;
-    Contact bestC;
+    for (size_t ti = 0; ti + 2 < mesh.indices.size(); ti += 3) {
+      const Vec3& a = mesh.verts[mesh.indices[ti+0]];
+      const Vec3& b = mesh.verts[mesh.indices[ti+1]];
+      const Vec3& c = mesh.verts[mesh.indices[ti+2]];
 
-    for (const auto& mesh : m_staticMeshes) {
-      if (mesh.indices.size() < 3 || mesh.verts.empty()) continue;
+      // CW-wound -> flip
+      Vec3 n = cross3(b - a, c - a) * -1.f;
+      if (!safeNormalize(n)) continue;
 
-      for (size_t ti = 0; ti + 2 < mesh.indices.size(); ti += 3) {
-        const Vec3& a = mesh.verts[mesh.indices[ti+0]];
-        const Vec3& b = mesh.verts[mesh.indices[ti+1]];
-        const Vec3& c = mesh.verts[mesh.indices[ti+2]];
-
-        // Meshes are CW-wound (rendering), flip normal for outward.
-        Vec3 n = cross3(b - a, c - a) * -1.f;
-        if (!safeNormalize(n)) continue;
-
+      for (int vi=0; vi<8; ++vi) {
+        const Vec3& p = boxVerts[vi];
         Vec3 cp = closestPointOnTri(p, a, b, c);
         float dist = dot3(p - cp, n);
-
         if (dist > skin) continue;
 
         float pen = skin - dist;
-        const float slop = 0.0025f;
+        const float slop = 0.0035f;
         if (pen <= slop) continue;
         pen -= slop;
 
-        if (!hasBest || pen > bestPen) {
-          hasBest = true;
-          bestPen = pen;
-          bestC.a = A.id;
-          bestC.b = 0;
-          bestC.point = cp;
-          bestC.normal = n;
-          bestC.penetration = pen;
+        if (!has[vi] || pen > bestPen[vi]) {
+          has[vi] = true;
+          bestPen[vi] = pen;
+          best[vi].a = A.id;
+          best[vi].b = 0;
+          best[vi].point = cp;
+          best[vi].normal = n;
+          best[vi].penetration = pen;
         }
       }
     }
-
-    if (hasBest) cands.push_back({bestC});
   }
 
-  if (cands.empty()) return;
-
-  std::sort(cands.begin(), cands.end(), [](const Cand& x, const Cand& y){
-    return x.c.penetration > y.c.penetration;
-  });
-
-  const int keep = std::min<int>(8, (int)cands.size());
-  for (int i=0;i<keep;++i)
-    out.push_back(cands[(size_t)i].c);
+  // emit up to 8
+  for (int vi=0; vi<8; ++vi) {
+    if (has[vi]) out.push_back(best[vi]);
+  }
 }
 
 // ------------------------------------------------------------
