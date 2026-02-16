@@ -330,10 +330,9 @@ void PhysicsWorldRB::contactsBoxTerrain(const RigidBoxBody& A, std::vector<Conta
 // ------------------------------------------------------------
 // Contacts: box vs static triangle meshes (CW-wound meshes)
 // ------------------------------------------------------------
+
 void PhysicsWorldRB::contactsBoxStaticMeshes(const RigidBoxBody& A, std::vector<Contact>& out) {
   if (m_staticMeshes.empty()) return;
-
-  const float skin = std::max(0.001f, contactSkin);
 
   Vec3 boxVerts[8];
   int idx = 0;
@@ -341,10 +340,12 @@ void PhysicsWorldRB::contactsBoxStaticMeshes(const RigidBoxBody& A, std::vector<
   for (int ix : s) for (int iy : s) for (int iz : s)
     boxVerts[idx++] = obbVertex(A, ix, iy, iz);
 
-  // best contact per corner
   Contact best[8];
   bool has[8] = {false,false,false,false,false,false,false,false};
   float bestPen[8] = {0,0,0,0,0,0,0,0};
+
+  // small slop avoids micro jitter at exact rest
+  const float slop = 0.0035f;
 
   for (const auto& mesh : m_staticMeshes) {
     if (mesh.indices.size() < 3 || mesh.verts.empty()) continue;
@@ -354,20 +355,32 @@ void PhysicsWorldRB::contactsBoxStaticMeshes(const RigidBoxBody& A, std::vector<
       const Vec3& b = mesh.verts[mesh.indices[ti+1]];
       const Vec3& c = mesh.verts[mesh.indices[ti+2]];
 
-      // CW-wound -> flip
+      // CW-wound meshes -> flip once
       Vec3 n = cross3(b - a, c - a) * -1.f;
       if (!safeNormalize(n)) continue;
+
+      // Treat meshes as "floor-ish": keep normal pointing upward
+      // (prevents side faces / underside from generating "support" contacts)
+      if (n.y < 0.f) n = n * -1.f;
+
+      // If it's basically vertical, ignore it as "floor support"
+      // (prevents boxes from being pushed through platforms by side triangles)
+      if (n.y < 0.35f) continue;
 
       for (int vi=0; vi<8; ++vi) {
         const Vec3& p = boxVerts[vi];
         Vec3 cp = closestPointOnTri(p, a, b, c);
-        float dist = dot3(p - cp, n);
-        if (dist > skin) continue;
 
-        float pen = skin - dist;
-        const float slop = 0.0035f;
-        if (pen <= slop) continue;
-        pen -= slop;
+        float dist = dot3(p - cp, n); // signed along outward/upward normal
+
+        // Penetration-only contact: if dist < 0, vertex is behind face plane
+        if (dist >= 0.f) continue;
+
+        float pen = (-dist) - slop;
+        if (pen <= 0.f) continue;
+
+        // clamp insane penetration (stops “teleport pop” feedback loops)
+        if (pen > 0.20f) pen = 0.20f;
 
         if (!has[vi] || pen > bestPen[vi]) {
           has[vi] = true;
@@ -382,11 +395,10 @@ void PhysicsWorldRB::contactsBoxStaticMeshes(const RigidBoxBody& A, std::vector<
     }
   }
 
-  // emit up to 8
-  for (int vi=0; vi<8; ++vi) {
+  for (int vi=0; vi<8; ++vi)
     if (has[vi]) out.push_back(best[vi]);
-  }
 }
+
 
 // ------------------------------------------------------------
 // Contacts: box vs box
@@ -554,7 +566,7 @@ void PhysicsWorldRB::solvePosition(const Contact& c) {
   if (!safeNormalize(n)) return;
 
   const float slop = 0.006f;
-  const float percent = 0.18f;
+  const float percent = 0.10f;
 
   float pen = c.penetration - slop;
   if (pen <= 0.f) return;
@@ -566,7 +578,7 @@ void PhysicsWorldRB::solvePosition(const Contact& c) {
 
   Vec3 corr = n * (percent * pen / wSum);
 
-  const float maxCorr = 0.10f;
+  const float maxCorr = 0.05f;
   float c2 = len2(corr);
   if (c2 > maxCorr * maxCorr) {
     corr = corr * (maxCorr / std::sqrt(c2));
