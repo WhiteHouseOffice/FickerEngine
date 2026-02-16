@@ -268,6 +268,7 @@ void PhysicsWorldRB::applyDamping(RigidBoxBody& b, float h) {
 // ------------------------------------------------------------
 void PhysicsWorldRB::contactsBoxGround(const RigidBoxBody& A, std::vector<Contact>& out) {
   const float skin = std::max(0.001f, contactSkin);
+  (void)skin;
 
   Vec3 verts[8];
   int idx = 0;
@@ -286,23 +287,20 @@ void PhysicsWorldRB::contactsBoxGround(const RigidBoxBody& A, std::vector<Contac
   const float nearMin = minY + 0.02f;
   for (int i=0;i<8 && emitted<4;i++) {
     if (verts[i].y <= nearMin && verts[i].y < groundY) {
-    Contact c;
-    c.a = A.id;
-    c.b = 0;
-    c.point = Vec3(verts[i].x, groundY, verts[i].z);
-    c.normal = Vec3(0,1,0);
-    c.penetration = (groundY - verts[i].y); // strictly > 0
-    out.push_back(c);
-    emitted++;
-  }
-
+      Contact c;
+      c.a = A.id;
+      c.b = 0;
+      c.point = Vec3(verts[i].x, groundY, verts[i].z);
+      c.normal = Vec3(0,1,0);
+      c.penetration = (groundY - verts[i].y); // strictly > 0
+      out.push_back(c);
+      emitted++;
+    }
   }
 }
 
 void PhysicsWorldRB::contactsBoxTerrain(const RigidBoxBody& A, std::vector<Contact>& out) {
   if (!enableTerrain || !m_terrainHeightFn) return;
-
-  const float skin = std::max(0.001f, contactSkin);
 
   Vec3 verts[8];
   int idx = 0;
@@ -315,18 +313,26 @@ void PhysicsWorldRB::contactsBoxTerrain(const RigidBoxBody& A, std::vector<Conta
     const Vec3& v = verts[i];
     const float h = terrainHeightAt(v.x, v.z);
     const float depth = h - v.y;
-  if (depth > 0.f) {
-    Contact c;
-    c.a = A.id;
-    c.b = 0;
-    c.point = Vec3(v.x, h, v.z);
-    c.normal = terrainNormalAt(v.x, v.z);
-    c.penetration = depth; // strictly positive
-    out.push_back(c);
-    emitted++;
+
+    if (depth > 0.f) {
+      Contact c;
+      c.a = A.id;
+      c.b = 0;
+      c.point = Vec3(v.x, h, v.z);
+
+      Vec3 nn = terrainNormalAt(v.x, v.z);
+      if (!safeNormalize(nn)) nn = Vec3(0,1,0);
+      // NEW: snap near-flat normals to pure up to prevent drift injection
+      if (nn.y > 0.92f) nn = Vec3(0,1,0);
+      c.normal = nn;
+
+      c.penetration = depth; // strictly positive
+      out.push_back(c);
+      emitted++;
     }
   }
 }
+
 // ------------------------------------------------------------
 // Contacts: box vs static triangle meshes (stabilized)
 // - penetration-only
@@ -363,6 +369,9 @@ void PhysicsWorldRB::contactsBoxStaticMeshes(const RigidBoxBody& A, std::vector<
       // force "floor-ish" direction (prevents underside/side weirdness)
       if (n.y < 0.f) n = n * -1.f;
       if (n.y < 0.35f) continue;
+
+      // NEW: snap near-flat normals to pure up to prevent drift injection
+      if (n.y > 0.92f) n = Vec3(0,1,0);
 
       for (int vi=0; vi<8; ++vi) {
         const Vec3& p = boxVerts[vi];
@@ -594,6 +603,9 @@ void PhysicsWorldRB::solvePosition(const Contact& c) {
   Vec3 n = c.normal;
   if (!safeNormalize(n)) return;
 
+  // NEW: failsafe snap for near-flat contacts to prevent drift injection
+  if (n.y > 0.92f) n = Vec3(0,1,0);
+
   // gentle correction
   const float slop = 0.006f;
   const float percent = 0.10f;
@@ -771,7 +783,7 @@ void PhysicsWorldRB::substep(float h) {
     }
   }
 
-  // --------- NEW: kill endless drift/spin when supported (resting stabilization)
+  // kill endless drift/spin when supported (resting stabilization)
   for (size_t i=0;i<m_bodies.size();++i) {
     if (!supported[i]) continue;
     auto& b = m_bodies[i];
@@ -781,7 +793,6 @@ void PhysicsWorldRB::substep(float h) {
     b.linearVelocity.z *= 0.65f;
     b.angularVelocity = b.angularVelocity * 0.65f;
   }
-  // ------------------------------------------------------------
 
   for (size_t i=0;i<m_bodies.size();++i)
     updateSleeping(m_bodies[i], h, supported[i] != 0);
