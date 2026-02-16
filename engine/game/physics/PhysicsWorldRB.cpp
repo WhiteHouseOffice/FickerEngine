@@ -484,9 +484,7 @@ void PhysicsWorldRB::gatherContacts(std::vector<Contact>& out) {
     // If terrain is enabled, static meshes often accidentally include the terrain too,
     // producing double-contacts at different heights => drift/rolling.
     // So for now: don't mix terrain + static meshes.
-    if (!enableTerrain) {
       contactsBoxStaticMeshes(b, out);
-    }
   }
 
   for (size_t i = 0; i < m_bodies.size(); ++i) {
@@ -766,7 +764,7 @@ void PhysicsWorldRB::substep(float h) {
 
   std::vector<uint8_t> supported(m_bodies.size(), 0);
   for (const auto& c : contacts) {
-    if (c.normal.y < 0.75f) continue;
+    if (c.normal.y < 0.55f) continue;
     for (size_t i=0;i<m_bodies.size();++i) {
       if (m_bodies[i].id == c.a) { supported[i] = 1; break; }
     }
