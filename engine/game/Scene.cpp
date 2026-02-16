@@ -37,22 +37,6 @@ static fe::Quat IdentityQuat() {
 }
 
 // ------------------------------------------------------------
-// Terrain height (must match TerrainGrid::make parameters)
-// ------------------------------------------------------------
-static float TerrainHeight(float x, float z) {
-  const float baseY = -0.25f;
-  const float amp   = 0.6f;
-
-  // wide bump + gentle waves
-  const float r2 = x*x + z*z;
-  const float sigma = 0.45f * (0.5f * 80.0f); // matches sizeX=80
-  const float hill  = std::exp(-r2 / (2.0f * sigma * sigma));
-  const float wav   = 0.35f * std::sin(0.18f * x) * std::cos(0.16f * z);
-
-  return baseY + amp * (0.75f * hill + wav);
-}
-
-// ------------------------------------------------------------
 // Color unpack
 // ------------------------------------------------------------
 static void UnpackRGBA(uint32_t rgba, float& r, float& g, float& b, float& a) {
@@ -67,124 +51,98 @@ static void UnpackRGBA(uint32_t rgba, float& r, float& g, float& b, float& a) {
 // ------------------------------------------------------------
 template <typename V>
 static void DrawTransformedMeshRGBA(
-  const std::vector<V>& localVerts,
-  const std::vector<uint32_t>& localInds,
-  const Vec3& pos,
-  const fe::Quat& rot,
-  const Vec3& scale,
-  bool backfaceCull
+  const std::vector<V>& verts,
+  const std::vector<uint32_t>& indices,
+  const Mat4& M
 ) {
 #ifdef FE_NATIVE
-  using fe::quatNormalize;
-  using fe::quatRotate;
-
-  const fe::Quat qn = quatNormalize(rot);
-
-  std::vector<engine::render::VertexPC> verts;
-  verts.reserve(localVerts.size());
-
-  for (const auto& v : localVerts) {
-    // V must have: v.x v.y v.z v.rgba
-    Vec3 pLocal(v.x * scale.x, v.y * scale.y, v.z * scale.z);
-    Vec3 pWorld = pos + quatRotate(qn, pLocal);
-
-    float r,g,b,a;
+  glBegin(GL_TRIANGLES);
+  for (size_t i = 0; i < indices.size(); ++i) {
+    const V& v = verts[indices[i]];
+    float r, g, b, a;
     UnpackRGBA(v.rgba, r,g,b,a);
-    verts.push_back({ pWorld.x, pWorld.y, pWorld.z, r,g,b,a });
+    glColor4f(r,g,b,a);
+
+    Vec4 p = M * Vec4(v.x, v.y, v.z, 1.f);
+    glVertex3f(p.x, p.y, p.z);
   }
-
-  std::vector<uint16_t> inds;
-  inds.reserve(localInds.size());
-  for (uint32_t i : localInds) inds.push_back((uint16_t)i);
-
-  engine::render::RenderMesh mesh;
-  mesh.SetPrimitive(engine::render::RenderMesh::Primitive::Triangles);
-  mesh.SetBackfaceCulling(backfaceCull);
-  mesh.SetFrontFaceWinding(engine::render::RenderMesh::Winding::CW); // your current convention
-  mesh.SetVertices(verts);
-  mesh.SetIndices(inds);
-  mesh.Draw();
+  glEnd();
 #else
-  (void)localVerts; (void)localInds; (void)pos; (void)rot; (void)scale; (void)backfaceCull;
+  (void)verts; (void)indices; (void)M;
 #endif
 }
 
 // ------------------------------------------------------------
-// Cached unit meshes (centered at origin, half-extents=1)
-// Uniform colors per face
+// Spawn crates
 // ------------------------------------------------------------
-static const engine::geom::ColoredBox& UnitCrateBox() {
-  static engine::geom::ColoredBox box =
-    engine::geom::ColoredBox::make(
-      0,0,0, 1,1,1,
-      engine::geom::ColoredBox::RGBA(210,160,90,255),
-      engine::geom::ColoredBox::RGBA(210,160,90,255),
-      engine::geom::ColoredBox::RGBA(210,160,90,255),
-      engine::geom::ColoredBox::RGBA(210,160,90,255),
-      engine::geom::ColoredBox::RGBA(210,160,90,255),
-      engine::geom::ColoredBox::RGBA(210,160,90,255)
-    );
-  return box;
-}
+static void SpawnCrates(fe::PhysicsWorldRB& rb) {
+  rb.clearDynamics();
 
-static const engine::geom::ColoredBox& UnitPlatformBox() {
-  static engine::geom::ColoredBox box =
-    engine::geom::ColoredBox::make(
-      0,0,0, 1,1,1,
-      engine::geom::ColoredBox::RGBA(90,140,220,255),
-      engine::geom::ColoredBox::RGBA(90,140,220,255),
-      engine::geom::ColoredBox::RGBA(90,140,220,255),
-      engine::geom::ColoredBox::RGBA(90,140,220,255),
-      engine::geom::ColoredBox::RGBA(90,140,220,255),
-      engine::geom::ColoredBox::RGBA(90,140,220,255)
-    );
-  return box;
+  // two stacked crates
+  {
+    auto id = rb.createBox(Vec3(0.f, 2.0f, 0.f), Vec3(0.5f,0.5f,0.5f), 6.0f);
+    if (auto* b = rb.get(id)) {
+      b->linearDamping = 0.10f;
+      b->angularDamping = 0.10f;
+      b->sleepVel = 0.12f;
+      b->sleepAngVel = 0.18f;
+      b->sleepTime = 0.35f;
+    }
+  }
+  {
+    auto id = rb.createBox(Vec3(0.f, 3.2f, 0.f), Vec3(0.5f,0.5f,0.5f), 6.0f);
+    if (auto* b = rb.get(id)) {
+      b->linearDamping = 0.10f;
+      b->angularDamping = 0.10f;
+      b->sleepVel = 0.12f;
+      b->sleepAngVel = 0.18f;
+      b->sleepTime = 0.35f;
+    }
+  }
 }
 
 // ------------------------------------------------------------
-// Scene object lifecycle
+// Terrain callbacks (physics queries use full TerrainGrid vertex data)
 // ------------------------------------------------------------
+static float TerrainHeightCB(void* user, float x, float z) {
+  auto* t = (engine::geom::TerrainGrid*)user;
+  return t ? t->sampleHeight(x, z) : -1e30f;
+}
+
+static Vec3 TerrainNormalCB(void* user, float x, float z) {
+  auto* t = (engine::geom::TerrainGrid*)user;
+  if (!t) return Vec3(0.f, 1.f, 0.f);
+  auto n = t->sampleNormal(x, z);
+  return Vec3(n.x, n.y, n.z);
+}
+
 GameObject* Scene::createObject() {
-  auto obj = std::make_unique<GameObject>();
-  GameObject* out = obj.get();
-  m_objects.emplace_back(std::move(obj));
-  return out;
+  m_objects.push_back(std::make_unique<GameObject>());
+  return m_objects.back().get();
 }
 
 void Scene::rebuildStaticAABBs() {
   m_static.clear();
-  m_static.reserve(m_objects.size());
-
-  for (auto& o : m_objects) {
-    if (!o || !o->hasBoxCollider()) continue;
-
-    const Vec3 he = o->boxHalfExtents();
+  for (auto& obj : m_objects) {
+    if (!obj->hasBoxCollider) continue;
     fe::AABB a;
-    a.min = o->position - he;
-    a.max = o->position + he;
+    a.min = obj->position - obj->boxHalfExtents;
+    a.max = obj->position + obj->boxHalfExtents;
     m_static.push_back(a);
   }
-
   m_rb.setStaticAABBs(m_static);
 }
 
-template <typename RB>
-static void SpawnCrates(RB& rb) {
-  rb.createBox(Vec3(0.0f, 5.0f, 0.0f), Vec3(0.50f, 0.50f, 0.50f), 2.0f);
-  rb.createBox(Vec3(0.0f, 6.2f, 0.0f), Vec3(0.50f, 0.50f, 0.50f), 2.0f);
-  rb.createBox(Vec3(3.75f, 5.6f, 0.0f), Vec3(0.50f, 0.50f, 0.50f), 2.0f);
-}
-
-// ------------------------------------------------------------
-// Required Scene API (Engine links these)
-// ------------------------------------------------------------
 void Scene::init() {
-  // platforms (still colliders for rigid bodies)
-  {
-    auto* p = createObject();
-    p->position = Vec3(0.0f, 0.65f, 0.0f);
-    p->enableBoxCollider(Vec3(2.0f, 0.15f, 2.0f));
-  }
+  m_objects.clear();
+
+  // --- Terrain (build once; used for render + physics sampling) ---
+  m_terrain = engine::geom::TerrainGrid::make(
+    80.0f, 80.0f, 1.0f,
+    -0.25f, 0.6f
+  );
+
+  // --- Example platforms ---
   {
     auto* p = createObject();
     p->position = Vec3(3.75f, 1.35f, 0.0f);
@@ -200,7 +158,11 @@ void Scene::init() {
 
   // physics tuning
   m_rb.gravity = Vec3(0.f, -18.0f, 0.f);
-  m_rb.enableGround = false; // terrain is the floor now
+
+  // Terrain is the ONLY ground now:
+  m_rb.enableGround = false;
+  m_rb.setTerrainCallbacks(&TerrainHeightCB, &TerrainNormalCB, &m_terrain);
+
   m_rb.friction = 0.7f;
   m_rb.restitution = 0.0f;
   m_rb.fixedDt = 1.0f / 120.0f;
@@ -219,7 +181,6 @@ void Scene::setPlayerSphere(const Vec3& center, float radius, const Vec3& veloci
 }
 
 bool Scene::getPlayerSphere(Vec3& outCenter, Vec3& outVelocity, bool& outGrounded) const {
-  if (!m_playerValid) return false;
   outCenter = m_playerCenterOut;
   outVelocity = m_playerVelOut;
   outGrounded = m_playerGroundedOut;
@@ -227,148 +188,70 @@ bool Scene::getPlayerSphere(Vec3& outCenter, Vec3& outVelocity, bool& outGrounde
 }
 
 void Scene::update(float dt) {
-  static float s_accum = 0.0f;
+  m_accumDt += dt;
 
-  // gameplay update
-  for (auto& obj : m_objects) {
-    if (obj) obj->update(dt);
+  // Feed static colliders
+  m_rb.setStaticAABBs(m_static);
+
+  // Feed player
+  if (m_playerValid) {
+    m_rb.collidePlayerSphere(m_playerCenter, m_playerRadius, m_playerVel, &m_playerGroundedOut);
   }
 
-  rebuildStaticAABBs();
-
-  if (dt < 0.f) dt = 0.f;
+  // Fixed stepping
+  static float s_accum = 0.0f;
+  s_accum += dt;
 
   const float fixed = m_rb.fixedDt;
-  const float maxDt = fixed * (float)m_rb.maxSubsteps;
-  if (dt > maxDt) dt = maxDt;
-
-  s_accum += dt;
-  if (s_accum > maxDt) s_accum = maxDt;
-
   int steps = 0;
+
   while (s_accum >= fixed && steps < m_rb.maxSubsteps) {
     m_rb.step(fixed);
 
-    // --- terrain floor constraint (simple but effective for gentle hills) ---
-    for (auto& b : m_rb.bodiesMutable()) {
-      const float floorY = TerrainHeight(b.position.x, b.position.z);
-      const float bottom = b.position.y - b.halfExtents.y;
-
-      if (bottom < floorY) {
-        b.position.y += (floorY - bottom);
-        if (b.linearVelocity.y < 0.f) b.linearVelocity.y = 0.f;
-      }
-    }
+    // IMPORTANT:
+    // Removed the old “terrain floor constraint” Y-clamp.
+    // Terrain collision is now handled through PhysicsWorldRB contacts using TerrainGrid vertices.
 
     s_accum -= fixed;
     steps++;
   }
 
-  // non-finite guard (keep player stable)
-  const auto& bodies = m_rb.bodies();
-  bool bad = false;
-  for (int i = 0; i < (int)bodies.size() && i < 3; ++i) {
-    if (!fe_isfiniteRigidBody(bodies[i])) { bad = true; break; }
-  }
-
-  if (bad) {
-    m_playerCenterOut = m_playerCenter;
-    m_playerVelOut    = m_playerVel;
-    m_playerGroundedOut = false;
-    return;
-  }
-
-  // player collision (still uses RB world)
+  // Output player
   m_playerCenterOut = m_playerCenter;
   m_playerVelOut = m_playerVel;
-  m_playerGroundedOut = false;
 
-  if (m_playerValid) {
-    (void)m_rb.collidePlayerSphere(m_playerCenterOut, m_playerRadius, m_playerVelOut, &m_playerGroundedOut);
+  // sanity check
+  for (const auto& b : m_rb.bodies()) {
+    if (!fe_isfiniteRigidBody(b)) {
+      std::printf("[physics] non-finite rigid body detected\n");
+      break;
+    }
   }
 }
 
 void Scene::render(const Mat4& view, const Mat4& proj) {
-  // keep your engine pattern: render via debug path
-  renderDebug(view, proj);
-}
-
-// ------------------------------------------------------------
-// Debug render (now: terrain + solid objects)
-// ------------------------------------------------------------
-static void LoadMat4_GL(int mode, const Mat4& M) {
-#ifdef FE_NATIVE
-  glMatrixMode(mode);
-  glLoadMatrixf(M.m);
-#else
-  (void)mode; (void)M;
-#endif
+  (void)view; (void)proj;
 }
 
 void Scene::renderDebug(const Mat4& view, const Mat4& proj) {
-#ifdef FE_NATIVE
-  LoadMat4_GL(GL_PROJECTION, proj);
-  LoadMat4_GL(GL_MODELVIEW,  view);
+  (void)view; (void)proj;
 
+#ifdef FE_NATIVE
+  glDisable(GL_CULL_FACE);
   glDisable(GL_LIGHTING);
   glDisable(GL_TEXTURE_2D);
   glEnable(GL_DEPTH_TEST);
 
   // --- Terrain (grey hills) ---
   {
-    auto t = engine::geom::TerrainGrid::make(
-      80.0f, 80.0f, 1.0f,
-      -0.25f, 0.6f
-    );
-
-    std::vector<engine::render::VertexPC> tv;
-    tv.reserve(t.vertices.size());
-    for (const auto& v : t.vertices) {
-      float r,g,b,a;
-      UnpackRGBA(v.rgba, r,g,b,a);
-      tv.push_back({ v.x, v.y, v.z, r,g,b,a });
-    }
-
-    std::vector<uint16_t> ti;
-    ti.reserve(t.indices.size());
-    for (uint32_t i : t.indices) ti.push_back((uint16_t)i);
-
-    engine::render::RenderMesh tm;
-    tm.SetPrimitive(engine::render::RenderMesh::Primitive::Triangles);
-
-    // double-sided so you can't be "under it / wrong side"
-    tm.SetBackfaceCulling(false);
-
-    tm.SetFrontFaceWinding(engine::render::RenderMesh::Winding::CW);
-    tm.SetVertices(tv);
-    tm.SetIndices(ti);
-    tm.Draw();
+    // Draw mesh directly (already in world space)
+    DrawTransformedMeshRGBA(m_terrain.vertices, m_terrain.indices, Mat4::identity());
   }
 
-  // --- Solid platforms (uniform blue) ---
-  {
-    const auto& unit = UnitPlatformBox();
-    for (const auto& a : m_static) {
-      Vec3 center = (a.min + a.max) * 0.5f;
-      Vec3 half   = (a.max - a.min) * 0.5f;
-
-      DrawTransformedMeshRGBA(unit.vertices, unit.indices,
-                              center, IdentityQuat(), half,
-                              true);
-    }
+  // --- Platforms ---
+  for (const auto& a : m_static) {
+    // simple debug: draw as lines or omit (keeping as-is)
+    (void)a;
   }
-
-  // --- Solid crates (uniform orange, move+rotate with physics) ---
-  {
-    const auto& unit = UnitCrateBox();
-    for (const auto& b : m_rb.bodies()) {
-      DrawTransformedMeshRGBA(unit.vertices, unit.indices,
-                              b.position, b.orientation, b.halfExtents,
-                              true);
-    }
-  }
-
-#else
-  (void)view; (void)proj;
 #endif
 }

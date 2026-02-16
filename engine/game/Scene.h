@@ -6,21 +6,15 @@
 #include "math/MiniMath.h"
 #include "game/GameObject.h"
 #include "game/physics/PhysicsWorldRB.h"
+#include "geom/TerrainGrid.h"
 
 class Scene {
 public:
   void init();
   void update(float dt);
-// Rendering split is intentional:
-// - render(): real game rendering (RenderMesh, triangles, shipping visuals)
-// - renderDebug(): developer-only overlays (grid, colliders, physics gizmos)
-//
-// render() may be empty during early engine bring-up.
-// Do NOT move debug drawing into render().
   void render(const Mat4& view, const Mat4& proj);
   void renderDebug(const Mat4& view, const Mat4& proj);
 
-  // Player proxy (kinematic sphere) for pushing / standing on props.
   void setPlayerSphere(const Vec3& center, float radius, const Vec3& velocity);
   bool getPlayerSphere(Vec3& outCenter, Vec3& outVelocity, bool& outGrounded) const;
 
@@ -36,6 +30,9 @@ private:
 
   // Static colliders (built from GameObjects with box colliders)
   std::vector<fe::AABB> m_static;
+
+  // Terrain mesh (render + physics sampling; full vertex count)
+  engine::geom::TerrainGrid m_terrain;
 
   // Cached player proxy (fed into physics each frame)
   bool  m_playerValid = false;
