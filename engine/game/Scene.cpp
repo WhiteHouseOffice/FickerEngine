@@ -105,7 +105,7 @@ static void DrawTransformedMeshRGBA(
   const std::vector<uint32_t>& localInds,
   const Vec3& pos,
   const fe::Quat& rot,
-  const Vec3& scale,
+  const Vec3& scale,   // NOTE: this is HALF-EXTENTS for our boxes
   bool backfaceCull
 ) {
 #ifdef FE_NATIVE
@@ -115,7 +115,16 @@ static void DrawTransformedMeshRGBA(
   verts.reserve(localVerts.size());
 
   for (const auto& v : localVerts) {
-    Vec3 pLocal(v.x * scale.x, v.y * scale.y, v.z * scale.z);
+    // IMPORTANT:
+    // ColoredBox unit verts are 0..1 (corner-based).
+    // Our physics bodies use pos as CENTER + halfExtents.
+    // So we must recenter to -0.5..+0.5 and scale by FULL extents (2*halfExtents).
+    Vec3 pLocal(
+      (v.x - 0.5f) * (2.0f * scale.x),
+      (v.y - 0.5f) * (2.0f * scale.y),
+      (v.z - 0.5f) * (2.0f * scale.z)
+    );
+
     Vec3 pWorld = pos + fe::quatRotate(qn, pLocal);
 
     float r,g,b,a;
@@ -139,14 +148,14 @@ static void DrawTransformedMeshRGBA(
 #endif
 }
 
-// --- Build a static triangle mesh (full vertices/triangles) ---
+// --- Build a static triangle mesh from a ColoredBox (full vertices/triangles) ---
 template <typename V>
 static fe::StaticTriMesh BuildStaticTriMesh(
   const std::vector<V>& localVerts,
   const std::vector<uint32_t>& localInds,
   const Vec3& pos,
   const fe::Quat& rot,
-  const Vec3& scale
+  const Vec3& scale   // NOTE: halfExtents
 ) {
   fe::StaticTriMesh m;
   m.verts.reserve(localVerts.size());
@@ -155,18 +164,23 @@ static fe::StaticTriMesh BuildStaticTriMesh(
   const fe::Quat qn = fe::quatNormalize(rot);
 
   for (const auto& v : localVerts) {
-    Vec3 pLocal(v.x * scale.x, v.y * scale.y, v.z * scale.z);
+    // Same centering fix as rendering.
+    Vec3 pLocal(
+      (v.x - 0.5f) * (2.0f * scale.x),
+      (v.y - 0.5f) * (2.0f * scale.y),
+      (v.z - 0.5f) * (2.0f * scale.z)
+    );
     Vec3 pWorld = pos + fe::quatRotate(qn, pLocal);
     m.verts.push_back(pWorld);
   }
   return m;
 }
 
-// --- Cached unit meshes (IMPORTANT: centered at origin) ---
+// --- Cached unit meshes ---
 static const engine::geom::ColoredBox& UnitCrateBox() {
   static engine::geom::ColoredBox box =
     engine::geom::ColoredBox::make(
-      -0.5f,-0.5f,-0.5f,  +0.5f,+0.5f,+0.5f,
+      0,0,0, 1,1,1,
       engine::geom::ColoredBox::RGBA(210,160,90,255),
       engine::geom::ColoredBox::RGBA(210,160,90,255),
       engine::geom::ColoredBox::RGBA(210,160,90,255),
@@ -179,7 +193,7 @@ static const engine::geom::ColoredBox& UnitCrateBox() {
 static const engine::geom::ColoredBox& UnitPlatformBox() {
   static engine::geom::ColoredBox box =
     engine::geom::ColoredBox::make(
-      -0.5f,-0.5f,-0.5f,  +0.5f,+0.5f,+0.5f,
+      0,0,0, 1,1,1,
       engine::geom::ColoredBox::RGBA(90,140,220,255),
       engine::geom::ColoredBox::RGBA(90,140,220,255),
       engine::geom::ColoredBox::RGBA(90,140,220,255),
@@ -247,7 +261,7 @@ void Scene::init() {
 
   rebuildStaticAABBs();
 
-  // Build static triangle meshes from platforms ONLY (do NOT include terrain tris here)
+  // Build static triangle meshes from platforms (full vertices)
   std::vector<fe::StaticTriMesh> staticMeshes;
   staticMeshes.reserve(m_objects.size());
 
@@ -256,11 +270,9 @@ void Scene::init() {
     if (!o || !o->hasBoxCollider()) continue;
     const Vec3 he = o->boxHalfExtents();
 
-    // IMPORTANT: unit mesh is [-0.5..+0.5], so scale must be FULL extents (2*he)
-    const Vec3 fullScale = he * 2.0f;
-
+    // Identity rotation for platforms for now (if you add rotation later, pass it here)
     staticMeshes.push_back(BuildStaticTriMesh(platformUnit.vertices, platformUnit.indices,
-                                             o->position, IdentityQuat(), fullScale));
+                                             o->position, IdentityQuat(), he));
   }
   m_rb.setStaticMeshes(staticMeshes);
 
@@ -301,6 +313,8 @@ void Scene::update(float dt) {
 
   for (auto& obj : m_objects)
     if (obj) obj->update(dt);
+
+  // (If platforms move later, rebuild staticMeshes here.)
 
   if (dt < 0.f) dt = 0.f;
 
@@ -377,10 +391,8 @@ void Scene::renderDebug(const Mat4& view, const Mat4& proj) {
     for (auto& o : m_objects) {
       if (!o || !o->hasBoxCollider()) continue;
       const Vec3 he = o->boxHalfExtents();
-      const Vec3 fullScale = he * 2.0f;
-
       DrawTransformedMeshRGBA(unit.vertices, unit.indices,
-                              o->position, IdentityQuat(), fullScale, true);
+                              o->position, IdentityQuat(), he, true);
     }
   }
 
@@ -388,9 +400,8 @@ void Scene::renderDebug(const Mat4& view, const Mat4& proj) {
   {
     const auto& unit = UnitCrateBox();
     for (const auto& b : m_rb.bodies()) {
-      const Vec3 fullScale = b.halfExtents * 2.0f;
       DrawTransformedMeshRGBA(unit.vertices, unit.indices,
-                              b.position, b.orientation, fullScale, true);
+                              b.position, b.orientation, b.halfExtents, true);
     }
   }
 #else
